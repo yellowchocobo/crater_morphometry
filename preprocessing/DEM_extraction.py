@@ -1,3 +1,14 @@
+import sys
+sys.path.append("/home/nilscp/GIT")
+
+from pathlib import Path
+from rastertools import utils
+
+import geopandas as gpd
+import pandas as pd
+import rasterio as rio
+
+# This should be replaced by a simple src.profile() from rasterio can get rid of
 def readheader(ascii_DEM_filename):
     
     ''' 
@@ -67,3 +78,61 @@ def readheader(ascii_DEM_filename):
             NODATA_value = float(tmp.split('NODATA_value')[1])            
             
     return (ncols, nrows, xllcorner, yllcorner, cellsize, NODATA_value)
+
+
+# this will not work if the columns in the location of craters have different
+# names.
+def clip_raster_to_crater(location_of_craters, dem, clip_distance, output_dir, craterID = None):
+        
+    filename = Path(location_of_craters)
+    
+    # reading the shape file (craters)
+    df = gpd.read_file(filename)
+    
+    # if a CRATER_ID is specified
+    if craterID:
+        df_selection = df[df.CRATER_ID == craterID]
+    else:
+        df_selection = df.copy()
+
+    # loop through all craters or get result for a specific crater    
+    for i in range(df_selection.shape[0]):
+        
+        # create a pandas DataFrame of a single crater entry
+        dict_crater = {'geometry': [df_selection.geometry.iloc[i]], 'index': [0]}
+        df_crater = pd.DataFrame(dict_crater)
+        
+        # create a geopandas Dataframe from the DataFrame
+        geodataframe_crater = gpd.GeoDataFrame(df_crater, geometry=df_crater.geometry)
+        geodataframe_crater.crs = df.crs
+        
+        # create a geopandas Series
+        geom_geoseries = gpd.GeoSeries(geodataframe_crater.geometry)
+        geom_geoseries.crs = df.crs
+        
+        # get the centroid from the crater ellipses
+        centroids = geom_geoseries.centroid
+    
+        # Does it make the buffer from the polygon? I do specifically 
+        buffer_array = centroids.buffer((df_selection.Diam_km.iloc[i]*0.5)*clip_distance*1000.0) 
+        envelope_array = buffer_array.envelope
+        
+        tmp = envelope_array.__geo_interface__ 
+        in_polygon = [tmp['features'][0]['geometry']]
+        
+        # generate name of the clipped raster
+        clipped_raster = Path(output_dir) / (df_selection.CRATER_ID.iloc[i] + '.tif')
+        utils.clip_advanced(dem, in_polygon, 'geojson', clipped_raster)
+        
+'''
+location_of_craters = "/home/nilscp/GIT/crater_morphometry/data/rayed_craters/rayed_craters.shp"
+dem = "/home/nilscp/tmp/Lunar_LRO_LrocKaguya_DEMmerge_60N60S_512ppd.tif"
+craterID = "crater0096"
+clip_distance = 8.0
+output_dir = "/home/nilscp/tmp/"
+       
+clip_raster_to_crater(location_of_craters, 
+                          dem, 
+                          clip_distance, "/home/nilscp/tmp/", craterID)
+'''
+    
