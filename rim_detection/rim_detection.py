@@ -1,14 +1,19 @@
 from rasterio.plot import reshape_as_raster, reshape_as_image
-
+from pathlib import Path
 
 import copy
+import geopandas as gpd
 import numpy as np
+import pandas as pd
 import random
 import rasterio as rio
 import scipy.linalg
 import scipy.ndimage
+import sys
 
-  
+sys.path.append("/home/nilscp/GIT/crater_morphometry")
+import geomorphometry
+
 def xy_circle(crater_radius, height_crater_center_px, width_crater_center_px):
     '''
     Parameters
@@ -1215,7 +1220,7 @@ def rim_composite(height_coord_ME, width_coord_ME, height_px_ME, width_px_ME, el
                 # previous ME distance
                 n_ME_not_used.append(n_ME_failed) 
                 
-                #number of gap (if absolutelty nothing worked)
+                #number of gap (if absolutly nothing worked)
                 gaplist.append(gap) 
                 
                 # all the difference between distances to LE and previously 
@@ -1231,9 +1236,11 @@ def rim_composite(height_coord_ME, width_coord_ME, height_px_ME, width_px_ME, el
     
     
     
-def run(crater_dem, crater_radius, scaling_factor):
+def first_run(crater_dem, crater_radius, scaling_factor):
     
     '''
+    The first run focus on re-adjusting the centre of the crater
+
     Parameters
     ----------
     crater_dem : TYPE
@@ -1249,7 +1256,11 @@ def run(crater_dem, crater_radius, scaling_factor):
         DESCRIPTION.
 
     '''
-    # read array
+
+    dem_filename = Path(crater_dem)
+
+    # --------------------------------------------------------------------------
+    ###########################      LOADING DEM     ###########################
     with rio.open(crater_dem) as src:
         array = reshape_as_image(src.read())[:,:,0]
         meta = src.profile
@@ -1259,37 +1270,312 @@ def run(crater_dem, crater_radius, scaling_factor):
     
     # height scaling factor for the SLDEM2015
     z = array * scaling_factor
-    
-    # we would like to have a square array so we take the min
-    min_of_shape = np.min(z.shape)
-    z_square = z[:min_of_shape, :min_of_shape]
 
-    x_y = np.linspace(0,(min_of_shape-1)*dem_resolution,min_of_shape)
-    x_y_center = np.linspace(dem_resolution/2.0, (dem_resolution/2.0) + 
-                             ((min_of_shape-1)*dem_resolution), min_of_shape)
-    
-    height_mesh, width_mesh = np.meshgrid(x_y, x_y, indexing='ij') # new addition
-    height_mesh_center, width_mesh_center = np.meshgrid(x_y_center, x_y_center, indexing='ij')
-    
-    # centre of the map
-    x_center_px = int(min_of_shape / 2)
-    y_center_px = int(min_of_shape / 2)
-    
-    
+    # --------------------------------------------------------------------------
+    ######################## FINDING CENTRE OF IMAGE ###########################
+
+    y_height = np.linspace(0, (z.shape[0] - 1) * dem_resolution, z.shape[0])
+    x_width = np.linspace(0, (z.shape[1] - 1) * dem_resolution, z.shape[1])
+
+    # Crater centre in pixel coordinates
+    y_height_crater_center_px = int(z.shape[0] / 2)
+    x_width_crater_center_px = int(z.shape[1] / 2)
+
+    # Origin of the raster (top left)
+    x_width_origin = meta['transform'][2]
+    y_height_origin = meta['transform'][5]
+
+    # Crater centre in "world" projection
+    y_height_center = y_height_origin - y_height[y_height_crater_center_px]
+    x_width_center = x_width_origin + x_width[x_width_crater_center_px]
+
+    y_height_mesh, x_width_mesh = np.meshgrid(y_height, x_width, indexing='ij')
+
     filterMedianStd = True #use standard deviation removal
+
+    #---------------------------------------------------------------------------
+    ###########################   DETRENDING 2R-3R   ###########################
     
-    # Only a single detrending is first run
+    # Only a single detrending in first run
     z_detrended = detrending(crater_radius,
                    2.0, 3.0,
-                   z_square, 
+                   z,
                    dem_resolution, 
-                   height_mesh, width_mesh, 
-                   x_center_px, y_center_px, 
+                   y_height_mesh, x_width_mesh,
+                   y_height_crater_center_px, x_width_crater_center_px,
                    filterMedianStd)
-       
-    # Return maximum, local and change in slope elevations are detected
-    return (z_detrended, detect_maximum_and_local_elevations(height_mesh, width_mesh, x_center_px, 
-                                             y_center_px, z_detrended, 
-                                             crater_radius, dem_resolution))
-    
-    
+
+    #---------------------------------------------------------------------------
+    ########################### SAVING DETRENDED DEM ###########################
+    meta_detrended = meta.copy()
+    meta_detrended['dtype'] = 'float64'
+
+    dem_detrended = np.reshape(z_detrended,
+                               (z_detrended.shape[0],
+                                z_detrended.shape[1],
+                                1))
+
+    dem_detrended_folder = dem_filename.parent.with_name('dem_detrended')
+    dem_detrended_folder.mkdir(parents=True, exist_ok=True)
+    dem_detrended_filename = (dem_detrended_folder / (
+            dem_filename.name.split('.tif')[0] + '_detrended.tif'))
+
+    with rio.open(dem_detrended_filename, 'w', **meta_detrended) as ds:
+        # reshape to rasterio raster format
+        ds.write(reshape_as_raster(dem_detrended))
+
+    #---------------------------------------------------------------------------
+    ####### FINDING MAX ELEV., LOCAL MAX AND CHANGE IN ELEVATIONS ##############
+    (height_coord_ME, width_coord_ME, height_px_ME, width_px_ME, elev_ME, profile_ME,
+     height_coord_LE, width_coord_LE, height_px_LE, width_px_LE, elev_LE, profile_LE,
+     height_coord_BS, width_coord_BS, height_px_BS, width_px_BS, elev_BS,
+     prof_BS) = (detect_maximum_and_local_elevations(y_height_mesh,
+                                                     x_width_mesh,
+                                                     y_height_crater_center_px,
+                                                     x_width_crater_center_px,
+                                                     z_detrended, crater_radius,
+                                                     dem_resolution))
+
+    #---------------------------------------------------------------------------
+    ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
+
+    # Maximum allowed radial discontinuity Drad
+    # (I should convert these values in cells)
+    maximum_shift_ME = 0.1 * crater_radius
+
+    # Distance of interest (searching distance)
+    maximum_shift_LE = 0.05 * crater_radius
+
+    (candidates_rim_composite, n_ME_not_used, gaplist, delta_distances) = (
+        rim_composite(height_coord_ME, width_coord_ME,
+                      height_px_ME, width_px_ME,
+                      elev_ME, profile_ME,
+                      height_coord_LE, width_coord_LE,
+                      height_px_LE, width_px_LE,
+                      elev_LE, profile_LE,
+                      y_height_mesh, x_width_mesh,
+                      y_height_crater_center_px, x_width_crater_center_px,
+                      maximum_shift_ME, maximum_shift_LE))
+
+    #---------------------------------------------------------------------------
+    ''' The stitching of the final rim composite returns 16 potential final 
+    rim composite candidates. A final step consists at selecting the rim 
+    which is the most complete by looking at the number of gaps and distances
+    between of points of the rim composite.'''
+    ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
+    for i in range(np.shape(candidates_rim_composite)[0]):
+        a = np.mean(delta_distances[i]) + (0.5 * n_ME_not_used[i])
+        if i == 0:
+            b = a
+            c = i
+        else:
+            if a < b:
+                b = a
+                c = i
+
+    y_height_final = np.array(candidates_rim_composite[c][0,:])
+    y_height_final = y_height_final[np.nonzero(y_height_final)]
+
+    x_width_final = np.array(candidates_rim_composite[c][1,:])
+    x_width_final = x_width_final[np.nonzero(x_width_final)]
+
+    z_final = np.array(candidates_rim_composite[c][2,:])
+    z_final = z_final[np.nonzero(z_final)]
+
+    profile_final = np.array(candidates_rim_composite[c][3,:])
+    profile_final = profile_final[np.nonzero(profile_final)]
+
+    flag_final = np.array(candidates_rim_composite[c][4,:])
+    flag_final = flag_final[np.nonzero(flag_final)]
+
+    #---------------------------------------------------------------------------
+    ############### SAVE POSITION OF THE FINAL RIM COMPOSITE ###################
+
+    df_xy_rim_comp = pd.DataFrame(
+        {'id': list(np.arange(len(x_width_final))),
+         'x': list(x_width_origin + x_width_final),
+         'y': list(y_height_origin - y_height_final)})
+
+    gdf_xy_rim_comp = gpd.GeoDataFrame(
+        df_xy_rim_comp.id,
+        geometry=gpd.points_from_xy(df_xy_rim_comp.x, df_xy_rim_comp.y,
+                                    crs=str(meta['crs'])))
+
+    shp_folder = dem_filename.parent.with_name('shapefiles')
+    shp_folder.mkdir(parents=True, exist_ok=True)
+
+    first_rim_comp = (shp_folder / (
+            dem_filename.name.split('.tif')[0] + '_first_rim_comp.shp'))
+
+    gdf_xy_rim_comp.to_file(first_rim_comp)
+
+    #---------------------------------------------------------------------------
+    ######## READJUSTING THE POSITION OF THE CENTRE OF THE CRATER ##############
+    x_width_newcenter, y_height_newcenter, crater_radius_new, residu = \
+        geomorphometry.leastsq_circle(
+        x_width_final, y_height_final)
+
+    #---------------------------------------------------------------------------
+    ###### SAVING THE NEW & OLD POSITIONS OF THE CENTRE OF THE CRATER ##########
+
+    # New position
+    df_xy_new_center = pd.DataFrame(
+        {'prof': [0],
+         'x': [x_width_newcenter + x_width_origin],
+         'y': [y_height_origin - y_height_newcenter]})
+
+    gdf_new_center = gpd.GeoDataFrame(
+        df_xy_new_center.prof,
+        geometry=gpd.points_from_xy(df_xy_new_center.x, df_xy_new_center.y,
+                                    crs=str(meta_detrended['crs'])))
+
+
+    new_crater_centre_filename = (shp_folder / (
+            dem_filename.name.split('.tif')[0] + '_new_crater_center.shp'))
+
+    gdf_new_center.to_file(new_crater_centre_filename)
+
+    # Old position
+    df_xy_old_center = pd.DataFrame(
+        {'prof': [0],
+         'x': [x_width_center],
+         'y': [y_height_center]})
+
+    gdf_old_center = gpd.GeoDataFrame(
+        df_xy_old_center.prof,
+        geometry=gpd.points_from_xy(df_xy_old_center.x, df_xy_old_center.y,
+                                    crs=str(meta['crs'])))
+
+    old_crater_centre_filename = (shp_folder / (
+            dem_filename.name.split('.tif')[0] + '_old_crater_center.shp'))
+
+    gdf_old_center.to_file(old_crater_centre_filename)
+
+    return (y_height_newcenter, x_width_newcenter, y_height_mesh, x_width_mesh,
+            crater_radius_new, z_detrended)
+
+def second_run(crater_dem, y_height_newcenter, x_width_newcenter,
+               y_height_mesh, x_width_mesh, crater_radius_new, z_detrended):
+
+    x_width_newcenter_px = int(np.round(x_width_newcenter / dem_resolution))
+    y_height_newcenter_px = int(np.round(y_height_newcenter / dem_resolution))
+
+    # ---------------------------------------------------------------------------
+    ########################   DETRENDING 0.9R-1.1R   ##########################
+
+    filterMedianStd = True
+
+    # Only a single detrending in first run
+    z_detrended = detrending(crater_radius_new,
+                             2.0, 3.0,
+                             z,
+                             dem_resolution,
+                             y_height_mesh, x_width_mesh,
+                             y_height_newcenter_px,
+                             x_width_newcenter_px,
+                             filterMedianStd)
+
+
+    #---------------------------------------------------------------------------
+    ########################### SAVING DETRENDED DEM ###########################
+    meta_detrended = meta.copy()
+    meta_detrended['dtype'] = 'float64'
+
+    dem_detrended = np.reshape(z_detrended,
+                               (z_detrended.shape[0],
+                                z_detrended.shape[1],
+                                1))
+
+    dem_detrended_folder = dem_filename.parent.with_name('dem_detrended')
+    dem_detrended_folder.mkdir(parents=True, exist_ok=True)
+    dem_detrended_filename = (dem_detrended_folder / (
+            dem_filename.name.split('.tif')[0] + '_detrended.tif'))
+
+    with rio.open(dem_detrended_filename, 'w', **meta_detrended) as ds:
+        # reshape to rasterio raster format
+        ds.write(reshape_as_raster(dem_detrended))
+
+    #---------------------------------------------------------------------------
+    ####### FINDING MAX ELEV., LOCAL MAX AND CHANGE IN ELEVATIONS ##############
+    (height_coord_ME, width_coord_ME, height_px_ME, width_px_ME, elev_ME, profile_ME,
+     height_coord_LE, width_coord_LE, height_px_LE, width_px_LE, elev_LE, profile_LE,
+     height_coord_BS, width_coord_BS, height_px_BS, width_px_BS, elev_BS,
+     prof_BS) = (detect_maximum_and_local_elevations(y_height_mesh,
+                                                     x_width_mesh,
+                                                     y_height_crater_center_px,
+                                                     x_width_crater_center_px,
+                                                     z_detrended, crater_radius,
+                                                     dem_resolution))
+
+    #---------------------------------------------------------------------------
+    ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
+
+    # Maximum allowed radial discontinuity Drad
+    # (I should convert these values in cells)
+    maximum_shift_ME = 0.1 * crater_radius
+
+    # Distance of interest (searching distance)
+    maximum_shift_LE = 0.05 * crater_radius
+
+    (candidates_rim_composite, n_ME_not_used, gaplist, delta_distances) = (
+        rim_composite(height_coord_ME, width_coord_ME,
+                      height_px_ME, width_px_ME,
+                      elev_ME, profile_ME,
+                      height_coord_LE, width_coord_LE,
+                      height_px_LE, width_px_LE,
+                      elev_LE, profile_LE,
+                      y_height_mesh, x_width_mesh,
+                      y_height_crater_center_px, x_width_crater_center_px,
+                      maximum_shift_ME, maximum_shift_LE))
+
+    #---------------------------------------------------------------------------
+    ''' The stitching of the final rim composite returns 16 potential final 
+    rim composite candidates. A final step consists at selecting the rim 
+    which is the most complete by looking at the number of gaps and distances
+    between of points of the rim composite.'''
+    ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
+    for i in range(np.shape(candidates_rim_composite)[0]):
+        a = np.mean(delta_distances[i]) + (0.5 * n_ME_not_used[i])
+        if i == 0:
+            b = a
+            c = i
+        else:
+            if a < b:
+                b = a
+                c = i
+
+    y_height_final = np.array(candidates_rim_composite[c][0,:])
+    y_height_final = y_height_final[np.nonzero(y_height_final)]
+
+    x_width_final = np.array(candidates_rim_composite[c][1,:])
+    x_width_final = x_width_final[np.nonzero(x_width_final)]
+
+    z_final = np.array(candidates_rim_composite[c][2,:])
+    z_final = z_final[np.nonzero(z_final)]
+
+    profile_final = np.array(candidates_rim_composite[c][3,:])
+    profile_final = profile_final[np.nonzero(profile_final)]
+
+    flag_final = np.array(candidates_rim_composite[c][4,:])
+    flag_final = flag_final[np.nonzero(flag_final)]
+
+    #---------------------------------------------------------------------------
+    ############### SAVE POSITION OF THE FINAL RIM COMPOSITE ###################
+
+    df_xy_rim_comp = pd.DataFrame(
+        {'id': list(np.arange(len(x_width_final))),
+         'x': list(x_width_origin + x_width_final),
+         'y': list(y_height_origin - y_height_final)})
+
+    gdf_xy_rim_comp = gpd.GeoDataFrame(
+        df_xy_rim_comp.id,
+        geometry=gpd.points_from_xy(df_xy_rim_comp.x, df_xy_rim_comp.y,
+                                    crs=str(meta['crs'])))
+
+    shp_folder = dem_filename.parent.with_name('shapefiles')
+    shp_folder.mkdir(parents=True, exist_ok=True)
+
+    first_rim_comp = (shp_folder / (
+            dem_filename.name.split('.tif')[0] + '_first_rim_comp.shp'))
+
+    gdf_xy_rim_comp.to_file(first_rim_comp)

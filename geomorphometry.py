@@ -45,9 +45,9 @@ def leastsq_circle(x,y):
     
     center, ier = optimize.leastsq(calc_D, center_estimate, args=(xt,yt))    
     xc, yc = center
-    Ri       = calc_R(xt, yt, *center)
-    R        = Ri.mean()
-    residu   = np.sum((Ri - R)**2)
+    Ri = calc_R(xt, yt, *center)
+    R = Ri.mean()
+    residu = np.sum((Ri - R)**2)
     return xc, yc, R, residu
 
 def power(x,a,b,c):   
