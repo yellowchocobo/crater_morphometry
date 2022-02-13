@@ -280,7 +280,7 @@ def rim_height_above_minimum_height_beyond_rim(elevation_hr,
     return (hr)
 
 
-def find_unique(x_rim, y_rim, dem_resolution, cs):
+def find_unique(y_height_final, x_width_final, dem_resolution, cs):
     '''
     
 
@@ -305,9 +305,9 @@ def find_unique(x_rim, y_rim, dem_resolution, cs):
     '''
     
     # create empty array
-    idx_detected = np.zeros((len(x_rim),2))
-    idx_detected[:,0] = (x_rim)/dem_resolution # transform to pixel coord
-    idx_detected[:,1] = (y_rim)/dem_resolution # transform to pixel coord    
+    idx_detected = np.zeros((len(y_height_final),2))
+    idx_detected[:,0] = (y_height_final)/dem_resolution # transform to pixel coord
+    idx_detected[:,1] = (x_width_final)/dem_resolution # transform to pixel coord
     idx_detected = idx_detected.astype('int')
     
     # Find unique indices from detected 
@@ -318,144 +318,86 @@ def find_unique(x_rim, y_rim, dem_resolution, cs):
     prof_uni_detected = cs[unique_index] #still contain zeros
     
     return (unique_i, prof_uni_detected)
-    
-    
 
-def calculate(xmesh, ymesh, x_rim, y_rim, cs_rim,
-                crater_radius, 
-                ndata, dem_resolution, 
-                ncenterx, ncentery):
-    '''
-    Parameters
-    ----------
-    xmesh : TYPE
-        DESCRIPTION.
-    ymesh : TYPE
-        DESCRIPTION.
-    x_rim : TYPE
-        DESCRIPTION.
-    y_rim : TYPE
-        DESCRIPTION.
-    cs_rim : TYPE
-        DESCRIPTION.
-    crater_radius : TYPE
-        DESCRIPTION.
-    ndata : TYPE
-        DESCRIPTION.
-    dem_resolution : TYPE
-        DESCRIPTION.
-    ncenterx : TYPE
-        DESCRIPTION.
-    ncentery : TYPE
-        DESCRIPTION.
 
-    Returns
-    -------
-    ucw_roc_val : TYPE
-        DESCRIPTION.
-    uf_roc_val : TYPE
-        DESCRIPTION.
-    cse : TYPE
-        DESCRIPTION.
-    slope_mcw : TYPE
-        DESCRIPTION.
-    slope_ucw : TYPE
-        DESCRIPTION.
-    slope_fsa : TYPE
-        DESCRIPTION.
-    slope_lrs : TYPE
-        DESCRIPTION.
-    slope_urs : TYPE
-        DESCRIPTION.
-    crdl : TYPE
-        DESCRIPTION.
-    frdl : TYPE
-        DESCRIPTION.
-    h : TYPE
-        DESCRIPTION.
-    hr : TYPE
-        DESCRIPTION.
-    depth : TYPE
-        DESCRIPTION.
-    diameter : TYPE
-        DESCRIPTION.
-    TYPE
-        DESCRIPTION.
-    cs_unique : TYPE
-        DESCRIPTION.
-    crossSections : TYPE
-        DESCRIPTION.
-    YSections : TYPE
-        DESCRIPTION.
-    XSections : TYPE
-        DESCRIPTION.
+def calculate(y_height_final, x_width_final, profile_final,
+              crater_radius,
+              z, dem_resolution,
+              y_height_center_px, x_width_center_px):
+    # Find unique indices from detected (other way)
+    index_unique, cs_unique = find_unique(y_height_final, x_width_final,
+                                          dem_resolution, profile_final)
 
-    '''
-            
-    # Find unique indices from detected (other way)    
-    index_unique, cs_unique = find_unique(x_rim, y_rim, dem_resolution, cs_rim)
-    
     # 2r from the center of the  crater
-    idx_circle2 = np.zeros((len(index_unique),2))
-    idx_circle2[:,0] = ((index_unique[:,0] - ncenterx)*2.) + ncenterx    
-    idx_circle2[:,1] = ((index_unique[:,1] - ncentery)*2.) + ncentery
-    
-    # samples at half the dem_resolution 
-    num = np.int(np.ceil(2.0*crater_radius/dem_resolution)*2.0)
-    
+    idx_circle2 = np.zeros((len(index_unique), 2))
+    idx_circle2[:, 0] = ((index_unique[:,
+                          0] - y_height_center_px) * 2.) + y_height_center_px
+    idx_circle2[:, 1] = ((index_unique[:,
+                          1] - x_width_center_px) * 2.) + x_width_center_px
+
+    # samples at half the dem_resolution
+    num = np.int(np.ceil(2.0 * crater_radius / dem_resolution) * 2.0)
+
     # I need to define all empty arrays here
-    (diameter, depth, h, hr, crdl, frdl, slope_urs, slope_lrs, 
-    slope_fsa, slope_ucw, slope_mcw, cse, uf_roc_val, ucw_roc_val) = [
-        np.zeros(len(idx_circle2)) for _ in range(14)] 
-    	
-	#dictionary to save the cross sections to
+    (diameter, depth, h, hr, crdl, frdl, slope_urs, slope_lrs,
+     slope_fsa, slope_ucw, slope_mcw, cse, uf_roc_val, ucw_roc_val) = [
+        np.zeros(len(idx_circle2)) for _ in range(14)]
+
+    # dictionary to save the cross sections to
     crossSections = dict()
     XSections = dict()
     YSections = dict()
-    
+
     # so it's only looping through cross sections where the rim composite
     # function resulted in a detection
-    
+
     for i, ind in enumerate(idx_circle2):
-                
         ncol = ind[0]
         nrow = ind[1]
-        
+
         jj = index_unique[i]
         ncol_1r = jj[0]
         nrow_1r = jj[1]
-                 
+
         # the distance is calculated, should be equal to two times the crater_radius
-        cols, rows = np.linspace(ncenterx, ncol, num), np.linspace(ncentery, nrow, num)
-        
-        # Extract the values along the line, using cubic interpolation and the 
+        cols, rows = np.linspace(y_height_center_px, ncol, num), np.linspace(
+            x_width_center_px, nrow, num)
+
+        # Extract the values along the line, using cubic interpolation and the
         # map coordinates
-        z = scipy.ndimage.map_coordinates(ndata, np.vstack((cols,rows))) # changed here 
-                       
+        z_extracted = scipy.ndimage.map_coordinates(z, np.vstack(
+            (cols, rows)))  # changed here
+
         # calculate the distance along the profile 2
-        dist_px = np.sqrt(((cols - ncenterx)**2.) + ((rows - ncentery)**2.))
-        dist = dist_px * dem_resolution #I guess it is what they call s in Geiger
-		
-		# I should here save each profile that could later on be used (either saved in a dictionary or 
-		# directly save to a text file. I would prefer first to be saved in a dictionary and then
-		# save to a text file) HERE MODIFY
-        crossSections[i] = z[:]
+        dist_px = np.sqrt(((cols - y_height_center_px) ** 2.) + (
+                    (rows - x_width_center_px) ** 2.))
+        dist = dist_px * dem_resolution  # I guess it is what they call s in Geiger
+
+        # I should here save each profile that could later on be used (either saved in a dictionary or
+        # directly save to a text file. I would prefer first to be saved in a dictionary and then
+        # save to a text file) HERE MODIFY
+        crossSections[i] = z_extracted[:]
         XSections[i] = cols
         YSections[i] = rows
-              
-        # ncol_1r and nrow_1r needs to be integer
-        value_nearest, idx_nearest = find_nearest(z, ndata[ncol_1r,nrow_1r])
-        
+
+        # ncol_1r and nrow_1r needs to be integer (This is dangerous as you
+        # can have altitude similar to the rim height outside of the rim!
+        # this needs to be fixed
+        value_nearest, idx_nearest = find_nearest(z_extracted, z[ncol_1r,
+                                                                 nrow_1r])
+
         diameter[i] = dist[idx_nearest] * 2.0
-        
-        #distance normalized 
-        dist_norm = dist/dist[idx_nearest]
-        
+
+        # distance normalized
+        dist_norm = dist / dist[idx_nearest]
+
         # geomorphometric calculations
-        (depth[i], h[i], hr[i], cse[i], slope_mcw[i], slope_ucw[i], 
-         slope_fsa[i], slope_urs[i], slope_lrs[i], frdl[i], crdl[i], 
-         ucw_roc_val[i], uf_roc_val[i]) = geomorphometry_cs(z, dist, dist_norm)        
-                
-        
-    return (ucw_roc_val, uf_roc_val, cse, slope_mcw, slope_ucw, slope_fsa, slope_lrs, slope_urs, crdl, frdl,
-            h, hr, depth, diameter, len(idx_circle2), cs_unique, crossSections, YSections, XSections)
+        (depth[i], h[i], hr[i], cse[i], slope_mcw[i], slope_ucw[i],
+         slope_fsa[i], slope_urs[i], slope_lrs[i], frdl[i], crdl[i],
+         ucw_roc_val[i], uf_roc_val[i]) = geomorphometry_cs(z_extracted, dist, dist_norm)
+
+    return (
+    ucw_roc_val, uf_roc_val, cse, slope_mcw, slope_ucw, slope_fsa, slope_lrs,
+    slope_urs, crdl, frdl,
+    h, hr, depth, diameter, len(idx_circle2), cs_unique, crossSections,
+    YSections, XSections)
