@@ -324,11 +324,14 @@ def calculate(y_height_final, x_width_final, profile_final,
               crater_radius,
               z, dem_resolution,
               y_height_center_px, x_width_center_px):
-    # Find unique indices from detected (other way)
+
+    # Find unique indices from detected rim
+    # Note that the values are transfored to pixel coordinates in this step
+    # (hidden in the function)
     index_unique, cs_unique = find_unique(y_height_final, x_width_final,
                                           dem_resolution, profile_final)
 
-    # 2r from the center of the  crater
+    # 2r from the center of the  crater (the origin is included here)
     idx_circle2 = np.zeros((len(index_unique), 2))
     idx_circle2[:, 0] = ((index_unique[:,
                           0] - y_height_center_px) * 2.) + y_height_center_px
@@ -343,7 +346,7 @@ def calculate(y_height_final, x_width_final, profile_final,
      slope_fsa, slope_ucw, slope_mcw, cse, uf_roc_val, ucw_roc_val) = [
         np.zeros(len(idx_circle2)) for _ in range(14)]
 
-    # dictionary to save the cross sections to
+    # dictionary to save the cross sections to (can be save as a geopandas)
     crossSections = dict()
     XSections = dict()
     YSections = dict()
@@ -383,6 +386,9 @@ def calculate(y_height_final, x_width_final, profile_final,
         # ncol_1r and nrow_1r needs to be integer (This is dangerous as you
         # can have altitude similar to the rim height outside of the rim!
         # this needs to be fixed
+        # much better to choose the nearest heights and widths in terms of
+        # coordinates
+
         value_nearest, idx_nearest = find_nearest(z_extracted, z[ncol_1r,
                                                                  nrow_1r])
 
