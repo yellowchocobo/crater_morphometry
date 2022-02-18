@@ -471,19 +471,16 @@ def find_candidates(y_height_px_CS, x_width_px_CS, cross_sections_CS,
             y_height_candidate_ME, x_width_candidate_ME, dist_candidate_ME,
             y_height_candidate_LE, x_width_candidate_LE, dist_candidate_LE)
 
-def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
-                  y_height_px_ME, x_width_px_ME, radius_ME,
-                  y_height_coord_LE, x_width_coord_LE, y_height_px_LE,
-                  x_width_px_LE, profile_LE, radius_LE,
-                  y_height_coord_CS, x_width_coord_CS, y_height_px_CS,
-                  x_width_px_CS, profile_CS, radius_CS,
-                  maximum_shift_ME):
+def rim_composite(y_height_px_CS, x_width_px_CS,cross_sections_CS,
+                  y_height_px_ME, x_width_px_ME,cross_sections_ME,
+                  y_height_px_LE, x_width_px_LE,cross_sections_LE):
+
     # Let's hard code some of the values (we don't change them actually)
     starting_angle = [0, 45, 90, 135, 180, 225, 270, 315]
 
     # number of maximum elevation detections (always will be 512)
     # redundant cross-sections are filtered away in later step
-    nME_detection = len(y_height_coord_ME) #y_height_px_ME.size
+    nME_detection = len(y_height_px_ME) #y_height_px_ME.size
 
     # equivalent points of 0, 45, 90, 135 degrees in terms of our data
     starting_crossS_id = (nME_detection * np.array(starting_angle)) / (360.)
@@ -505,7 +502,7 @@ def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
     # cumulative differences two consecutive cross sections (in terms of diameters)
     cum_delta_distance = np.zeros((n_iterations))
     gap = np.zeros((n_iterations))
-    is_not_nME = np.zeros((n_iterations))
+    is_ME_or_CS = np.zeros((n_iterations))
 
     '''
     ***********************LOOPS *********************************************
@@ -562,35 +559,186 @@ def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
                     y_height_starting, x_width_starting, i))
 
                 # is it within 5 pixels?
-                if ((dist_candidate_CS < 5) or (dist_candidate_ME < 5)):
+                if (dist_candidate_CS <= 5) or (dist_candidate_ME <= 5):
 
                     # who is the closest of max elevations and change in slope?
                     if np.min(dist_candidate_CS) < np.min(dist_candidate_ME):
-                        # add dist_candidate_CS, update last position
-                    else:
-                        # add candidate ME, update last position
-                else:
-                    if np.any(dist_candidate_LE < 5):
-                        # argmin
-                        # add LE, update last position
-                    else:
-                        for j in 5 * [1]:
-                            k = k + j
-                            i = crossS_id[k]
 
-                            (y_height_candidate_CS, x_width_candidate_CS,
-                             dist_candidate_CS,
-                             y_height_candidate_ME, x_width_candidate_ME,
-                             dist_candidate_ME,
-                             y_height_candidate_LE, x_width_candidate_LE,
-                             dist_candidate_LE) = (find_candidates(
-                                y_height_px_CS, x_width_px_CS,
-                                cross_sections_CS,
-                                y_height_px_ME, x_width_px_ME,
-                                cross_sections_ME,
-                                y_height_px_LE, x_width_px_LE,
-                                cross_sections_LE,
-                                y_height_starting, x_width_starting, i))
+                        y_height_px_final[pnum, k] = y_height_candidate_CS[0]
+                        x_width_px_final[pnum, k] = x_width_candidate_CS[0]
+                        profile_final[pnum, k] = i
+                        flag_final[pnum, k] = 0
+
+                        cum_delta_distance[pnum] = cum_delta_distance[pnum] + dist_candidate_CS[0]
+                        is_ME_or_CS[pnum] = is_ME_or_CS[pnum] + 1
+                        y_height_starting = y_height_candidate_CS[0]
+                        x_width_starting = x_width_candidate_CS[0]
+                        k = k + 1
+                    else:
+                        y_height_px_final[pnum, k] = y_height_candidate_ME[0]
+                        x_width_px_final[pnum, k] = x_width_candidate_ME[0]
+                        profile_final[pnum, k] = i
+                        flag_final[pnum, k] = 1
+
+                        cum_delta_distance[pnum] = cum_delta_distance[pnum] + np.abs(dist_candidate_ME[0])
+                        is_ME_or_CS[pnum] = is_ME_or_CS[pnum] + 1
+                        y_height_starting = y_height_candidate_ME[0]
+                        x_width_starting = x_width_candidate_ME[0]
+                        k = k + 1
+                else:
+                    if np.any(dist_candidate_LE <= 5):
+                        idx = np.argmin(dist_candidate_LE)
+                        y_height_px_final[pnum, k] = y_height_candidate_LE[idx]
+                        x_width_px_final[pnum, k] = x_width_candidate_LE[idx]
+                        profile_final[pnum, k] = i
+                        flag_final[pnum, k] = 2
+                        cum_delta_distance[pnum] = cum_delta_distance[pnum] + dist_candidate_LE[idx]
+                        y_height_starting = y_height_candidate_LE[idx]
+                        x_width_starting = x_width_candidate_LE[idx]
+                        k = k + 1
+
+                    else:
+                        gap[pnum] = gap[pnum] + 1
+                        flag_final[pnum, k] = 4
+
+                        # add 5 pixels to cumulative difference
+                        cum_delta_distance[pnum] = cum_delta_distance[pnum] + 5
+
+                        is_break = False
+
+                        for j in range(5):
+                            if k < 511:
+                                k = k + 1
+                                i = crossS_id[k]
+
+                                (y_height_candidate_CS, x_width_candidate_CS,
+                                 dist_candidate_CS,
+                                 y_height_candidate_ME, x_width_candidate_ME,
+                                 dist_candidate_ME,
+                                 y_height_candidate_LE, x_width_candidate_LE,
+                                 dist_candidate_LE) = (find_candidates(
+                                    y_height_px_CS, x_width_px_CS,
+                                    cross_sections_CS,
+                                    y_height_px_ME, x_width_px_ME,
+                                    cross_sections_ME,
+                                    y_height_px_LE, x_width_px_LE,
+                                    cross_sections_LE,
+                                    y_height_starting, x_width_starting, i))
+
+                                if (dist_candidate_CS <= 5) or (dist_candidate_ME <= 5):
+
+                                    # who is the closest of max elevations and change in slope?
+                                    if np.min(dist_candidate_CS) < np.min(
+                                            dist_candidate_ME):
+
+                                        y_height_px_final[pnum, k] = \
+                                        y_height_candidate_CS[0]
+                                        x_width_px_final[pnum, k] = \
+                                        x_width_candidate_CS[0]
+                                        profile_final[pnum, k] = i
+                                        flag_final[pnum, k] = 0
+
+                                        cum_delta_distance[pnum] = cum_delta_distance[
+                                                                       pnum] + \
+                                                                   dist_candidate_CS[0]
+                                        is_ME_or_CS[pnum] = is_ME_or_CS[
+                                                                pnum] + 1
+                                        y_height_starting = y_height_candidate_CS[0]
+                                        x_width_starting = x_width_candidate_CS[0]
+                                        k = k + 1
+                                        is_break = True
+                                        break
+                                    else:
+                                        y_height_px_final[pnum, k] = \
+                                        y_height_candidate_ME[0]
+                                        x_width_px_final[pnum, k] = \
+                                        x_width_candidate_ME[0]
+                                        profile_final[pnum, k] = i
+                                        flag_final[pnum, k] = 1
+
+                                        cum_delta_distance[pnum] = cum_delta_distance[
+                                                                       pnum] + np.abs(
+                                            dist_candidate_ME[0])
+                                        is_ME_or_CS[pnum] = is_ME_or_CS[
+                                                                pnum] + 1
+                                        y_height_starting = y_height_candidate_ME[0]
+                                        x_width_starting = x_width_candidate_ME[0]
+                                        k = k + 1
+                                        is_break = True
+                                        break
+                                else:
+                                    if np.any(dist_candidate_LE <= 5):
+                                        idx = np.argmin(dist_candidate_LE)
+
+                                        y_height_px_final[pnum, k] = \
+                                        y_height_candidate_LE[idx]
+                                        x_width_px_final[pnum, k] = \
+                                        x_width_candidate_LE[idx]
+                                        profile_final[pnum, k] = i
+                                        flag_final[pnum, k] = 2
+
+                                        cum_delta_distance[pnum] = cum_delta_distance[
+                                                                       pnum] + \
+                                                                   dist_candidate_LE[
+                                                                       idx]
+                                        y_height_starting = y_height_candidate_LE[idx]
+                                        x_width_starting = x_width_candidate_LE[idx]
+                                        k = k + 1
+                                        is_break = True
+                                        break
+                                    else:
+                                        gap[pnum] = gap[pnum] + 1
+                                        # add 5 pixels to cumulative difference
+                                        cum_delta_distance[pnum] = cum_delta_distance[pnum] + 5
+                                        flag_final[pnum, k] = 4
+                            else:
+                                k = k + 1
+                                is_break = True
+                                break
+                        if is_break:
+                            None
+                        else:
+                            if bool(random.getrandbits(1)):
+                                y_height_px_final[pnum, k] = y_height_candidate_CS[
+                                    0]
+                                x_width_px_final[pnum, k] = x_width_candidate_CS[0]
+                                profile_final[pnum, k] = i
+                                flag_final[pnum, k] = 0
+
+                                cum_delta_distance[pnum] = cum_delta_distance[
+                                                               pnum] + \
+                                                           dist_candidate_CS[0]
+                                is_ME_or_CS[pnum] = is_ME_or_CS[pnum] + 1
+                                y_height_starting = y_height_candidate_CS[0]
+                                x_width_starting = x_width_candidate_CS[0]
+                                k = k + 1
+                            else:
+                                y_height_px_final[pnum, k] = \
+                                y_height_candidate_ME[
+                                    0]
+                                x_width_px_final[pnum, k] = \
+                                x_width_candidate_ME[0]
+                                profile_final[pnum, k] = i
+                                flag_final[pnum, k] = 1
+
+                                cum_delta_distance[pnum] = cum_delta_distance[
+                                                               pnum] + \
+                                                           dist_candidate_ME[0]
+                                is_ME_or_CS[pnum] = is_ME_or_CS[pnum] + 1
+                                y_height_starting = y_height_candidate_ME[0]
+                                x_width_starting = x_width_candidate_ME[0]
+                                k = k + 1
+            pnum += 1
+
+    return (y_height_px_final, x_width_px_final, profile_final, flag_final,
+            cum_delta_distance, is_ME_or_CS, gap)
+
+
+
+
+
+                            # take the median average distance of all rim
+                            # candidates, and search for
 
 
                         # while loop
@@ -793,7 +941,7 @@ def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
                                             distance_to_last_rim_composite_elevation)
 
             # to continue to loop through all possible clockwise, counterclockwise
-            pnum += 1
+
 
     return (y_height_coord_final, x_width_coord_final,
             y_height_px_final, x_width_px_final,
