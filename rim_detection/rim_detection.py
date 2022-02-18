@@ -175,8 +175,7 @@ def detrending(crater_radius,
     else:
         return (detrended_elevation)
 
-# changed name from linear3Ddetrending to elevation_plane
-def elevation_plane(height_disk_selection, width_disk_selection, 
+def elevation_plane(height_disk_selection, width_disk_selection,
                     z, 
                     height_mesh, width_mesh, 
                     filterMedianStd):
@@ -256,210 +255,67 @@ def local_maxima(array):
     return ((array >= np.roll(array, 1)) &
             (array >= np.roll(array, -1)))
 
-def maximum_elevation(z_profile, heights, widths, y_height_mesh,
-                      x_width_mesh, y_height_crater_center_px,
-                      x_width_crater_center_px):
-    '''
-    Find the maximum elevation along a cross section (1-D numpy array).
+def maxima(array):
+    return (array == np.max(array))
 
-    Parameters
-    ----------
-    z : 1-D numpy array
-        Elevations along a cross-section.
-    heights : int
-        all positions (in terms of indexes in the array) across the x-axis.
-    widths : int
-        all positions (in terms of indexes in the array) across the y-axis.
-    y_height_mesh : 2D numpy array
-        mesh grid with the same dimension as the elevations.
-    x_width_mesh : 2D numpy array
-        mesh grid with the same dimension as the elevations.
+def minima(array):
+    return (array == np.min(array))
 
-    Returns
-    -------
-    y_height_coord_ME : numpy array
-        position of the maximum_elevation in DEM map projection accross the x-axis.
-    x_width_coord_ME : numpy array
-        position of the maximum_elevation in DEM map projection accross the y-axis.
-    y_height_px_ME : numpy array
-        position of the maximum_elevation in px coordinates accross the x-axis.
-    x_width_px_ME : numpy array
-        position of the maximum_elevation in px coordinates accross the y-axis.
-    maximum_elevation : float
-        maximum elevation along the cross-section profile.
+def maximum_elevations(y_heights_px, x_widths_px, z_profiles, cross_sections_ids):
 
-    '''
-    
-    # I still don't understand how nan values will occur, but just to be on the
-    # safe side. The first and last values are just to avoid obvious
-    # non-realistic
-    max_elv_idx = np.argmax(z_profile)
+    idx_ME = np.apply_along_axis(maxima, 1, z_profiles)
+    y_height_px_ME = y_heights_px[idx_ME]
+    x_width_px_ME = x_widths_px[idx_ME]
+    elev_ME = z_profiles[idx_ME]
+    cross_sections_ME = cross_sections_ids[idx_ME]
 
-    elev_ME = z_profile[max_elv_idx]
-
-    y_height_px_ME = np.int32(np.round(heights[max_elv_idx]))
-    x_width_px_ME = np.int32(np.round(widths[max_elv_idx]))
-
-    y_height_coord_ME = y_height_mesh[y_height_px_ME, x_width_px_ME]
-    x_width_coord_ME = x_width_mesh[y_height_px_ME, x_width_px_ME]
-
-    # calculate the crater_radius to the global maximum elevation
-    ab = (x_width_coord_ME - x_width_mesh[
-        y_height_crater_center_px, x_width_crater_center_px]) ** 2.0
-    bc = (y_height_coord_ME - y_height_mesh[
-        y_height_crater_center_px, x_width_crater_center_px]) ** 2.0  # changed
-
-    distance_to_ME_detection = np.sqrt(ab + bc)
-
-    return (y_height_coord_ME, x_width_coord_ME,
-            y_height_px_ME, x_width_px_ME,
-            elev_ME, distance_to_ME_detection)
+    return (y_height_px_ME, x_width_px_ME, elev_ME, idx_ME, cross_sections_ME)
 
 
+def local_elevations(y_heights_px, x_widths_px, z_profiles, cross_sections_ids):
+
+    idx_LE = np.apply_along_axis(local_maxima, 1, z_profiles)
+    y_height_px_LE = y_heights_px[idx_LE]
+    x_width_px_LE = x_widths_px[idx_LE]
+    elev_LE = z_profiles[idx_LE]
+    cross_sections_LE = cross_sections_ids[idx_LE]
 
 
-# changed name from local_elevation to local_elevations
-# search_ncells is added so that not too many local maximas are detected
-def local_elevations(z_profile, heights, widths, y_height_mesh,
-                     x_width_mesh, y_height_crater_center_px,
-                     x_width_crater_center_px, cs_id):
-    '''
-    Parameters
-    ----------
-    z : numpy 1-D array
-        Elevations along the cross-section profile.
-    n_points_along_cs : int
-        Number of elevations along the cross section profile.
-    search_ncells : int
-        Number of cells to search before and after a local maxima is found.
-    heights : numpy 1-D array (int)
-        x-coordinate of all the elevations in the cross-section (in pixel).
-    widths : numpy 1-D array (int)
-        y-coordinate of all the elevations in the cross-section (in pixel).
-    cs_id : int
-        cross-section id.
-    y_height_mesh : numpy array
-        mesh grid with the same dimension as the elevations.
-    x_width_mesh : numpy array
-        mesh grid with the same dimension as the elevations.
+    return (y_height_px_LE, x_width_px_LE ,elev_LE, idx_LE, cross_sections_LE)
 
-    Returns
-    -------
-    y_height_coord_LE : numpy 1-D array (float)
-        positions of the local elevations in the DEM in map projection (across the x-axis).
-    x_width_coord_LE : numpy 1-D array (float)
-        positions of the local elevations in the DEM in map projection (across the y-axis).
-    y_height_px_LE : numpy 1-D array (int)
-        positions of the local elevations in the DEM in pixels (across the x-axis).
-    x_width_px_LE : numpy 1-D array (int)
-        positions of the local elevations in the DEM in pixels (across the y-axis).
-    elev_LE : numpy 1-D array (float)
-        local elevations along the cross-section profile.
-    profile_LE : int
-        Several local elevations will be found per cross-section. We have thus
-        the need to track the cross-section id.
-    '''
+def maximum_slope_change(crater_radius, dem_resolution, y_heights_px,
+                         x_widths_px, z_profiles, distances,
+                         cross_sections_ids):
 
-    # need first to calculate the locations of the local maxima
-    idx_local_minima = np.where(local_maxima(z_profile) == True)[0]
-    idx_local_minima_filtered = idx_local_minima.astype('int')
-
-    # should not be duplicates now that round is used
-    y_height_px_LE = np.int32(np.round(heights[idx_local_minima_filtered]))
-    x_width_px_LE = np.int32(np.round(widths[idx_local_minima_filtered]))
-
-    ## you might have duplicate in there, especially because I am rounding
-
-    y_height_coord_LE = y_height_mesh[y_height_px_LE, x_width_px_LE]
-    x_width_coord_LE = x_width_mesh[y_height_px_LE, x_width_px_LE]
-
-    # calculate the crater_radius to the global maximum elevation
-    ab = (x_width_coord_LE - x_width_mesh[
-        y_height_crater_center_px, x_width_crater_center_px]) ** 2.0
-    bc = (y_height_coord_LE - y_height_mesh[
-        y_height_crater_center_px, x_width_crater_center_px]) ** 2.0  # changed
-
-    distance_to_LE_detection = np.sqrt(ab + bc)
-    profile_LE = np.array(distance_to_LE_detection.size * [cs_id])
-    elev_LE = z_profile[idx_local_minima_filtered]
-
-    return (y_height_coord_LE, x_width_coord_LE,
-            y_height_px_LE, x_width_px_LE,
-            elev_LE, profile_LE, distance_to_LE_detection)
-
-'''
-Previous leftovers. I was using a searching distance to filter out 
-some of the local elevations that were too far off. While this is good,
-this decreases the quality of the automatic detection of the algorithm in 
-the case where the initial centre of the crater is a bit off. Having a 
-common projection, such as Equirectangular/Simple Cylindrical can cause
-the centre of the crater to be  few hundreds of meters off. 
-
-# upper-boundary
-#ub = np.ceil(crater_radius + maximum_shift_LE)
-# lower-boundary
-#lb = np.floor(crater_radius - maximum_shift_LE)
-#
-#idx_selection = np.logical_and(distance_to_LE_detection <= ub,
-#                               distance_to_LE_detection >= lb)
-
-
-#distance_to_LE_detection = distance_to_LE_detection[idx_selection]
-#nidx = idx_local_minima_filtered[idx_selection]
-#elev_LE = z_profile[nidx]
-#y_height_px_LE = np.int32(np.round(heights[nidx]))
-#x_width_px_LE = np.int32(np.round(widths[nidx]))
-#y_height_coord_LE = y_height_mesh[y_height_px_LE, x_width_px_LE]
-#x_width_coord_LE = x_width_mesh[y_height_px_LE, x_width_px_LE]
-#profile_LE = np.array(distance_to_LE_detection.size * [cs_id])
-'''
-
-def slope_change(crater_radius, z_profile, heights, widths, y_height_mesh,
-                     x_width_mesh, y_height_crater_center_px,
-                     x_width_crater_center_px, dem_resolution, cs_id):
-
-    # calculate the crater_radius to the global maximum elevation
-    ab = (widths - x_width_crater_center_px) ** 2.0
-    bc = (heights - y_height_crater_center_px) ** 2.0  # changed
-    distances = np.sqrt(ab + bc) * (dem_resolution)
-
-    # create empty arrays    
-    diff_slope = np.zeros(len(z_profile))
-
-    # 0.05 R
-    interval  = np.int32(np.ceil((crater_radius * 0.05) / (0.5*dem_resolution)))
+    interval = np.int32(np.ceil((crater_radius * 0.05) / (0.5 * dem_resolution)))
 
     # need at least three points to calculate a slope with confidence
-    # Otherwise, it does not work!
     if interval < 3:
         interval = 3
 
-    # we need to test if these are the largest values within 0.1*R of the value
-    for i in np.arange(interval,len(z_profile)-interval,1):
+    diff_slope = np.zeros_like(z_profiles)
 
-        slope_before = geomorphometry.cavity_slope(z_profile[i-interval:i],
-                                                   distances[i-interval:i])
-        slope_after = geomorphometry.cavity_slope(z_profile[i:i+interval],
-                                                   distances[i:i+interval])
+    # This step takes a very long time, I am not sure if there is a better
+    # way for doing that
+    for i in range(z_profiles.shape[0]):
+        for j in np.arange(interval, z_profiles.shape[1] - interval, 1):
+            slope_before = geomorphometry.cavity_slope(
+                z_profiles[i][j - interval:j],
+                distances[i][j - interval:j])
 
-        diff_slope[i] = slope_after - slope_before
+            slope_after = geomorphometry.cavity_slope(
+             z_profiles[i][j:j + interval],
+             distances[i][j:j + interval])
 
-    # Let's take the 10 largest slope changes per cross section
-    # Equivalent to finding the 10 smallest values
-    #idx_selection = np.argpartition(diff_slope, 10)[:10]
+            diff_slope[i,j] = slope_after - slope_before
 
-    idx_selection = np.argmin(diff_slope)
-    distance_to_CS_detection = distances[idx_selection]
-    elev_CS = z_profile[idx_selection]
-    y_height_px_CS = np.int32(np.round(heights[idx_selection]))
-    x_width_px_CS = np.int32(np.round(widths[idx_selection]))
-    y_height_coord_CS = y_height_mesh[y_height_px_CS, x_width_px_CS]
-    x_width_coord_CS = x_width_mesh[y_height_px_CS, x_width_px_CS]
-    profile_CS = np.array(distance_to_CS_detection.size * [cs_id])
+    idx_CS = np.apply_along_axis(minima, 1, diff_slope)
+    y_height_px_CS = y_heights_px[idx_CS]
+    x_width_px_CS = x_widths_px[idx_CS]
+    elev_CS = z_profiles[idx_CS]
+    cross_sections_CS = cross_sections_ids[idx_CS]
 
-    return (y_height_coord_CS, x_width_coord_CS,
-            y_height_px_CS, x_width_px_CS,
-            elev_CS, profile_CS, distance_to_CS_detection)
+    return (y_height_px_CS, x_width_px_CS ,elev_CS, idx_CS, cross_sections_CS)
 
 def find_nearest(array, value):
     '''
@@ -482,11 +338,55 @@ def find_nearest(array, value):
     idx = (np.abs(array - value)).argmin()
     return (array[idx], idx)
 
-def detect_maximum_and_local_elevations(y_height_mesh, x_width_mesh,
-                                        y_height_crater_center_px,
-                                        x_width_crater_center_px,
-                                        z_detrended, crater_radius,
-                                        dem_resolution):
+def arange(array):
+    return (array * np.arange(array.size))
+
+def extract_cross_sections(crater_radius, dem_resolution,
+                          y_height_crater_center_px,
+                          x_width_crater_center_px,
+                          z_detrended):
+
+    # 2R circles pixel coordinates height_circle_px, width_circle_px
+    height_circle_px, width_circle_px = xy_circle(
+        (2.0 * crater_radius) / dem_resolution,
+        y_height_crater_center_px, x_width_crater_center_px)
+
+
+    n_points_along_cs = np.int32(
+        np.ceil(2.0 * crater_radius / dem_resolution) * 2.0)
+
+    # The circle is always divided in 512 camemberts :)
+    z_profiles = np.ones((512,n_points_along_cs))
+    y_heights_px = np.ones((512,n_points_along_cs))
+    x_widths_px = np.ones((512,n_points_along_cs))
+    cross_sections_ids = np.apply_along_axis(arange, 0, np.ones((512, n_points_along_cs)))
+
+    # This step takes lot of time
+    for ix in range(len(height_circle_px)):
+        # find the pixel coordinates
+        height_2R = height_circle_px[ix]
+        width_2R = width_circle_px[ix]
+
+        # the distance is calculated, should be equal to two times the crater_radius
+        y_heights_px[ix] = np.linspace(y_height_crater_center_px, height_2R, n_points_along_cs)
+        x_widths_px[ix] = np.linspace(x_width_crater_center_px, width_2R, n_points_along_cs)
+
+        # Extract the values along the line, using cubic interpolation and the
+        # map coordinates
+        z_profiles[ix] = scipy.ndimage.map_coordinates(z_detrended,
+                                          np.vstack((y_heights_px[ix], x_widths_px[ix])))
+
+    # calculate the crater_radius to the global maximum elevation
+    h_d = (y_heights_px - y_height_crater_center_px)** 2.0
+    w_d = (x_widths_px - x_width_crater_center_px)** 2.0
+    distances = np.sqrt(h_d + w_d) * dem_resolution
+
+    return y_heights_px, x_widths_px, z_profiles, distances, cross_sections_ids
+
+
+def detect_potential_rim_candidates(y_heights_px, x_widths_px, z_profiles,
+                                    crater_radius, cross_sections_ids,
+                                    distances, dem_resolution):
     '''
     Routine to extract the maximum elevations, local minima elevations and
     max. break in slope elevations from a given crater.
@@ -513,108 +413,63 @@ def detect_maximum_and_local_elevations(y_height_mesh, x_width_mesh,
     None.
 
     '''
-    # 2R circles pixel coordinates height_circle_px, width_circle_px
-    height_circle_px, width_circle_px = xy_circle(
-        (2.0 * crater_radius) / dem_resolution,
-        y_height_crater_center_px, x_width_crater_center_px)
+    (y_height_px_ME, x_width_px_ME, elev_ME, idx_ME, cross_sections_ME) = (
+    maximum_elevations(y_heights_px, x_widths_px, z_profiles,
+                       cross_sections_ids))
 
-    # real values height_circle_px, width_circle_px
-    (height_circle_px, width_circle_px) = (
-    np.round(height_circle_px).astype('int'),
-    np.round(width_circle_px).astype('int'))
+    (y_height_px_LE, x_width_px_LE ,elev_LE, idx_LE, cross_sections_LE) = (
+    local_elevations(y_heights_px, x_widths_px, z_profiles, cross_sections_ids))
 
-    # we define the maximum elevation variables (need to be float for nan)
-    y_height_coord_ME = np.ones(512) * np.nan
-    x_width_coord_ME = np.ones(512) * np.nan
-    y_height_px_ME = np.ones(512) * np.nan
-    x_width_px_ME = np.ones(512) * np.nan
-    elev_ME = np.ones(512) * np.nan
-    radius_ME = np.ones(512) * np.nan
-    profile_ME = np.arange(512)
+    (y_height_px_CS, x_width_px_CS ,elev_CS, idx_CS, cross_sections_CS) = (
+    maximum_slope_change(crater_radius, dem_resolution, y_heights_px,
+                         x_widths_px, z_profiles, distances,
+                         cross_sections_ids))
 
-    # we define the local maxima variables
-    (y_height_coord_LE, x_width_coord_LE,
-     y_height_px_LE, x_width_px_LE,
-     elev_LE, profile_LE, radius_LE) = [np.array([]) for _ in range(7)]
-
-    # we define the change in slope variables
-    (y_height_coord_CS, x_width_coord_CS,
-     y_height_px_CS, x_width_px_CS,
-     elev_CS, profile_CS, radius_CS) = [np.array([]) for _ in range(7)]
-
-    # samples at half the dem_resolution
-    n_points_along_cs = np.int32(
-        np.ceil(2.0 * crater_radius / dem_resolution) * 2.0)
-
-    # generate cross sections between the centre of the crater and the 2.0R
-    # circle pixel coordinates
-    for ix in range(len(height_circle_px)):
-        # find the pixel coordinates
-        height_2R = height_circle_px[ix]
-        width_2R = width_circle_px[ix]
-
-        # the distance is calculated, should be equal to two times the crater_radius
-        (heights, widths) = (
-        np.linspace(y_height_crater_center_px, height_2R, n_points_along_cs),
-        np.linspace(x_width_crater_center_px, width_2R, n_points_along_cs))
-
-        # Extract the values along the line, using cubic interpolation and the
-        # map coordinates
-        z_profile = scipy.ndimage.map_coordinates(z_detrended,
-                                          np.vstack((heights, widths)))
-
-        # Detect the maximum elevation along each cross-section
-        data_ME = maximum_elevation(
-            z_profile, heights, widths, y_height_mesh,
-            x_width_mesh, y_height_crater_center_px,
-            x_width_crater_center_px)
-
-        if data_ME:
-            y_height_coord_ME[ix] = data_ME[0]
-            x_width_coord_ME[ix] = data_ME[1]
-            y_height_px_ME[ix] = data_ME[2]
-            x_width_px_ME[ix] = data_ME[3]
-            elev_ME[ix] = data_ME[4]
-            radius_ME[ix] = data_ME[5]
-
-        # Detect local elevations along each cross-section
-        data_LE = local_elevations(
-            z_profile, heights, widths, y_height_mesh,
-            x_width_mesh, y_height_crater_center_px,
-            x_width_crater_center_px, ix)
-
-        # can be several local elevations per cross sections
-        y_height_coord_LE = np.append(y_height_coord_LE, data_LE[0])
-        x_width_coord_LE = np.append(x_width_coord_LE, data_LE[1])
-        y_height_px_LE = np.append(y_height_px_LE, data_LE[2])
-        x_width_px_LE = np.append(x_width_px_LE, data_LE[3])
-        elev_LE = np.append(elev_LE, data_LE[4])
-        profile_LE = np.append(profile_LE, data_LE[5])
-        radius_LE = np.append(radius_LE, data_LE[6])
-
-        # Detect change in slope along each cross-section
-
-        data_CS = slope_change(crater_radius, z_profile, heights, widths,
-                    y_height_mesh,
-                    x_width_mesh, y_height_crater_center_px,
-                    x_width_crater_center_px, dem_resolution, ix)
-
-        # can be several local elevations per cross sections
-        y_height_coord_CS = np.append(y_height_coord_CS, data_CS[0])
-        x_width_coord_CS = np.append(x_width_coord_CS, data_CS[1])
-        y_height_px_CS = np.append(y_height_px_CS, data_CS[2])
-        x_width_px_CS = np.append(x_width_px_CS, data_CS[3])
-        elev_CS = np.append(elev_CS, data_CS[4])
-        profile_CS = np.append(profile_CS, data_CS[5])
-        radius_CS = np.append(radius_CS, data_CS[6])
+    return (y_height_px_ME, x_width_px_ME, elev_ME, idx_ME, cross_sections_ME,
+            y_height_px_LE, x_width_px_LE, elev_LE, idx_LE, cross_sections_LE,
+            y_height_px_CS, x_width_px_CS, elev_CS, idx_CS, cross_sections_CS)
 
 
-    return (y_height_coord_ME, x_width_coord_ME, y_height_px_ME, x_width_px_ME,
-            elev_ME, profile_ME, radius_ME, y_height_coord_LE, x_width_coord_LE,
-            y_height_px_LE, x_width_px_LE, elev_LE, profile_LE, radius_LE,
-            y_height_coord_CS, x_width_coord_CS, y_height_px_CS,
-            x_width_px_CS, elev_CS, profile_CS, radius_CS)
+def distance_between_points(y_height_loc_1, x_width_loc_1,
+                            y_height_loc_2, x_width_loc_2):
 
+    h_d = (y_height_loc_2 - y_height_loc_1)** 2.0
+    w_d = (x_width_loc_2 - x_width_loc_1)** 2.0
+    distances = np.sqrt(h_d + w_d)
+    return distances
+
+def find_candidates(y_height_px_CS, x_width_px_CS, cross_sections_CS,
+                    y_height_px_ME, x_width_px_ME, cross_sections_ME,
+                    y_height_px_LE, x_width_px_LE, cross_sections_LE,
+                    y_height_last, x_width_last, i):
+
+    y_height_candidate_CS = y_height_px_CS[cross_sections_CS == i]
+    x_width_candidate_CS = x_width_px_CS[cross_sections_CS == i]
+
+    y_height_candidate_ME = y_height_px_ME[cross_sections_ME == i]
+    x_width_candidate_ME = x_width_px_ME[cross_sections_ME == i]
+
+    y_height_candidate_LE = y_height_px_LE[cross_sections_LE == i]
+    x_width_candidate_LE = x_width_px_LE[cross_sections_LE == i]
+
+    dist_candidate_CS = distance_between_points(y_height_last,
+                                                x_width_last,
+                                                y_height_candidate_CS,
+                                                x_width_candidate_CS)
+
+    dist_candidate_ME = distance_between_points(y_height_last,
+                                                x_width_last,
+                                                y_height_candidate_ME,
+                                                x_width_candidate_ME)
+
+    dist_candidate_LE = distance_between_points(y_height_last,
+                                                x_width_last,
+                                                y_height_candidate_LE,
+                                                x_width_candidate_LE)
+
+    return (y_height_candidate_CS, x_width_candidate_CS, dist_candidate_CS,
+            y_height_candidate_ME, x_width_candidate_ME, dist_candidate_ME,
+            y_height_candidate_LE, x_width_candidate_LE, dist_candidate_LE)
 
 def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
                   y_height_px_ME, x_width_px_ME, radius_ME,
@@ -628,7 +483,7 @@ def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
 
     # number of maximum elevation detections (always will be 512)
     # redundant cross-sections are filtered away in later step
-    nME_detection = len(y_height_coord_ME)
+    nME_detection = len(y_height_coord_ME) #y_height_px_ME.size
 
     # equivalent points of 0, 45, 90, 135 degrees in terms of our data
     starting_crossS_id = (nME_detection * np.array(starting_angle)) / (360.)
@@ -686,27 +541,78 @@ def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
             k = 0
 
             # Find last point of loop to have reference for start
-            # We need to find the maximum elevation for this profile
-            distance_to_last_rim_composite_elevation = radius_ME[crossS_id[-1]]
-
-            # this step can cause a problem, as if we start with a nan value
-            # let's replace the nan value with the average crater radius if
-            # this is the case
-            #if np.isnan(distance_to_last_rim_composite_elevation):
-            #    distance_to_last_rim_composite_elevation = crater_radius
-            #else:
-            #    None
+            # We need to find the change in slope for this profile
+            y_height_starting = y_height_px_CS[cross_sections_CS == crossS_id[-1]]
+            x_width_starting = x_width_px_CS[cross_sections_CS == crossS_id[-1]]
 
             while k < 512:
 
                 # loop through cross-sections (cs)
                 i = crossS_id[k]
 
-                # is crater_radius of ME at that cs within 0.10R of the previous estimate?
+                # is the new candidate at the new cross-section within 5 pixels
+                # of the previous position?
+                (y_height_candidate_CS, x_width_candidate_CS, dist_candidate_CS,
+                 y_height_candidate_ME, x_width_candidate_ME, dist_candidate_ME,
+                 y_height_candidate_LE, x_width_candidate_LE,
+                 dist_candidate_LE) = (find_candidates(
+                    y_height_px_CS, x_width_px_CS, cross_sections_CS,
+                    y_height_px_ME, x_width_px_ME, cross_sections_ME,
+                    y_height_px_LE, x_width_px_LE,cross_sections_LE,
+                    y_height_starting, x_width_starting, i))
+
+                # is it within 5 pixels?
+                if ((dist_candidate_CS < 5) or (dist_candidate_ME < 5)):
+
+                    # who is the closest of max elevations and change in slope?
+                    if np.min(dist_candidate_CS) < np.min(dist_candidate_ME):
+                        # add dist_candidate_CS, update last position
+                    else:
+                        # add candidate ME, update last position
+                else:
+                    if np.any(dist_candidate_LE < 5):
+                        # argmin
+                        # add LE, update last position
+                    else:
+                        for j in 5 * [1]:
+                            k = k + j
+                            i = crossS_id[k]
+
+                            (y_height_candidate_CS, x_width_candidate_CS,
+                             dist_candidate_CS,
+                             y_height_candidate_ME, x_width_candidate_ME,
+                             dist_candidate_ME,
+                             y_height_candidate_LE, x_width_candidate_LE,
+                             dist_candidate_LE) = (find_candidates(
+                                y_height_px_CS, x_width_px_CS,
+                                cross_sections_CS,
+                                y_height_px_ME, x_width_px_ME,
+                                cross_sections_ME,
+                                y_height_px_LE, x_width_px_LE,
+                                cross_sections_LE,
+                                y_height_starting, x_width_starting, i))
+
+
+                        # while loop
+                        # every cross_sections
+                        # check if there is a change in slope candidates within
+                        # 5 pixels if yes, take the closest
+
+
+
+                # if yes, save the location
                 ub = np.ceil(
                     distance_to_last_rim_composite_elevation + maximum_shift_ME)  # upper-boundary
                 lb = np.floor(
                     distance_to_last_rim_composite_elevation - maximum_shift_ME)  # lower-boundary
+
+                # if not, are any local maximas within 5 pixels?
+
+                # if yes, save the location
+
+                # if not, gap
+
+                # search in the coming 5 cross-sections
 
                 # Maximum elevation within 0.1 R is found
                 if np.logical_and(radius_ME[i] <= ub,
@@ -893,7 +799,34 @@ def rim_composite(crater_radius, y_height_coord_ME, x_width_coord_ME,
             y_height_px_final, x_width_px_final,
             profile_final, flag_final, cum_delta_distance, is_not_nME, gap)
     
-    
+def cloud_points_to_shapefile(y_height_px, x_width_px, elev,
+                              cross_sections, y_height_mesh,
+                              x_width_mesh, y_height_origin, x_width_origin,
+                              filename, meta):
+
+    # filename
+    filename = Path(filename)
+
+    # convert from pixel to world coordinates
+    x_width_px = np.round(x_width_px).astype('int')
+    y_height_px = np.round(y_height_px).astype('int')
+
+    x_width_coord = x_width_origin + x_width_mesh[y_height_px, x_width_px]
+    y_height_coord = y_height_origin - y_height_mesh[y_height_px, x_width_px]
+
+    # update with more information
+    df = pd.DataFrame(
+        {'id': list(np.arange(x_width_px.size)),
+         'x': list(x_width_coord),
+         'y': list(y_height_coord),
+         'elevation': list(elev),
+         'cross_sect': list(cross_sections)})
+
+    gdf = gpd.GeoDataFrame(df,
+        geometry=gpd.points_from_xy(df.x, df.y,
+                                    crs=str(meta['crs'])))
+
+    gdf.to_file(filename)
     
 def first_run(crater_dem, crater_radius, scaling_factor):
     
@@ -991,82 +924,55 @@ def first_run(crater_dem, crater_radius, scaling_factor):
 
     #---------------------------------------------------------------------------
     ####### FINDING MAX ELEV., LOCAL MAX AND CHANGE IN ELEVATIONS ##############
-    (y_height_coord_ME, x_width_coord_ME, y_height_px_ME, x_width_px_ME,
-     elev_ME, profile_ME, radius_ME, y_height_coord_LE, x_width_coord_LE,
-     y_height_px_LE, x_width_px_LE, elev_LE, profile_LE,
-     radius_LE, y_height_coord_CS, x_width_coord_CS, y_height_px_CS,
-            x_width_px_CS, elev_CS, profile_CS, radius_CS) = detect_maximum_and_local_elevations(y_height_mesh,
-                                                      x_width_mesh,
-                                                      y_height_crater_center_px,
-                                                      x_width_crater_center_px,
-                                                      z_detrended, crater_radius,
-                                                      dem_resolution)
+
+    y_heights_px, x_widths_px, z_profiles, distances, cross_sections_ids =
+    extract_cross_sections(crater_radius, dem_resolution,
+                           y_height_crater_center_px,
+                           x_width_crater_center_px,
+                           z_detrended)
+
+    (y_height_px_ME, x_width_px_ME, elev_ME, idx_ME, cross_sections_ME,
+     y_height_px_LE, x_width_px_LE, elev_LE, idx_LE, cross_sections_LE,
+     y_height_px_CS, x_width_px_CS, elev_CS, idx_CS,
+     cross_sections_CS) = detect_potential_rim_candidates(y_heights_px,
+                                                          x_widths_px,
+                                                          z_profiles,
+                                                          crater_radius,
+                                                          cross_sections_ids,
+                                                          distances,
+                                                          dem_resolution)
 
     #---------------------------------------------------------------------------
     ############### SAVE POSITION OF THE MAXIMUM ELEVATIONS ####################
 
-    # update with more information
-    df_xy_rim_comp = pd.DataFrame(
-        {'id': list(np.arange(len(x_width_coord_ME))),
-         'x': list(x_width_origin + x_width_coord_ME),
-         'y': list(y_height_origin - y_height_coord_ME)})
-
-    gdf_xy_rim_comp = gpd.GeoDataFrame(
-        df_xy_rim_comp,
-        geometry=gpd.points_from_xy(df_xy_rim_comp.x, df_xy_rim_comp.y,
-                                    crs=str(meta['crs'])))
-
     shp_folder = dem_filename.parent.with_name('shapefiles')
     shp_folder.mkdir(parents=True, exist_ok=True)
+    filename = (shp_folder / (dem_filename.name.split('.tif')[0] + '_max_elevations.shp'))
 
-    first_rim_comp = (shp_folder / (
-            dem_filename.name.split('.tif')[0] + '_max_elevations.shp'))
-
-    gdf_xy_rim_comp.to_file(first_rim_comp)
+    cloud_points_to_shapefile(y_height_px_ME, x_width_px_ME, elev_ME,
+                              cross_sections_ME, y_height_mesh,
+                              x_width_mesh, y_height_origin, x_width_origin,
+                              filename, meta)
 
     #---------------------------------------------------------------------------
     ############### SAVE POSITION OF THE CHANGE IN SLOPE ######################
 
-    df_xy_rim_comp = pd.DataFrame(
-        {'id': list(np.arange(len(x_width_coord_CS))),
-         'x': list(x_width_origin + x_width_coord_CS),
-         'y': list(y_height_origin - y_height_coord_CS)})
+    filename= (shp_folder / (dem_filename.name.split('.tif')[0] + '_change_in_slopes.shp'))
 
-    gdf_xy_rim_comp = gpd.GeoDataFrame(
-        df_xy_rim_comp,
-        geometry=gpd.points_from_xy(df_xy_rim_comp.x, df_xy_rim_comp.y,
-                                    crs=str(meta['crs'])))
-
-    shp_folder = dem_filename.parent.with_name('shapefiles')
-    shp_folder.mkdir(parents=True, exist_ok=True)
-
-    first_rim_comp = (shp_folder / (
-            dem_filename.name.split('.tif')[0] + '_change_in_slopes.shp'))
-
-    gdf_xy_rim_comp.to_file(first_rim_comp)
-
+    cloud_points_to_shapefile(y_height_px_CS, x_width_px_CS, elev_CS,
+                              cross_sections_CS, y_height_mesh,
+                              x_width_mesh, y_height_origin, x_width_origin,
+                              filename, meta)
     #---------------------------------------------------------------------------
     ############### SAVE POSITION OF THE LOCAL MAXIMAS #########################
 
-    df_xy_rim_comp = pd.DataFrame(
-        {'id': list(np.arange(len(x_width_coord_LE))),
-         'x': list(x_width_origin + x_width_coord_LE),
-         'y': list(y_height_origin - y_height_coord_LE)})
+    filename= (shp_folder / (dem_filename.name.split('.tif')[0] +
+                             '_local_maximas.shp'))
 
-    gdf_xy_rim_comp = gpd.GeoDataFrame(
-        df_xy_rim_comp,
-        geometry=gpd.points_from_xy(df_xy_rim_comp.x, df_xy_rim_comp.y,
-                                    crs=str(meta['crs'])))
-
-    shp_folder = dem_filename.parent.with_name('shapefiles')
-    shp_folder.mkdir(parents=True, exist_ok=True)
-
-    first_rim_comp = (shp_folder / (
-            dem_filename.name.split('.tif')[0] + '_local_maximas.shp'))
-
-    gdf_xy_rim_comp.to_file(first_rim_comp)
-
-
+    cloud_points_to_shapefile(y_height_px_LE, x_width_px_LE, elev_LE,
+                              cross_sections_LE, y_height_mesh,
+                              x_width_mesh, y_height_origin, x_width_origin,
+                              filename, meta)
 
     #---------------------------------------------------------------------------
     ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
