@@ -331,6 +331,9 @@ def calculate(y_height_final, x_width_final, profile_final,
     index_unique, cs_unique = find_unique(y_height_final, x_width_final,
                                           dem_resolution, profile_final)
 
+    # This step can be avoided can use the predict of the ellipsoid with
+    # 2 a and 2b (will this be correct?)
+
     # 2r from the center of the  crater (the origin is included here)
     idx_circle2 = np.zeros((len(index_unique), 2))
     idx_circle2[:, 0] = ((index_unique[:,

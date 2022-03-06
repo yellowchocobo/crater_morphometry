@@ -3,6 +3,7 @@ sys.path.append("/home/nilscp/GIT")
 
 from pathlib import Path
 from rastertools import utils
+from affine import Affine
 
 import numpy as np
 import geopandas as gpd
@@ -218,37 +219,48 @@ def select_proj(longitude, latitude):
 
     return proj
 
+def removekey(d, key):
+    r = dict(d)
+    del r[key]
+    return r
+
 def iterrows_calculations(gdf, dem, crs_dem, clip_distance, output_dir,
                           identifier):
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     for index, row in gdf.iterrows():
-        crs_local = select_proj(row.lon,row.lat)
-        crater_center = gpd.GeoSeries(row.geometry)
-        crater_center.crs = gdf.crs
-        crater_center_crs_local = crater_center.to_crs(crs_local)
-        buff = crater_center_crs_local.buffer((row.diam / 2.0) * clip_distance)
-        envelope = buff.envelope
-        envelope_crs_dem = envelope.to_crs(crs_dem)
-        poly = envelope_crs_dem.__geo_interface__
-        in_poly = [poly['features'][0]['geometry']]
-
-
-        # generate name of the clipped raster
-        clipped_raster_fname = Path(output_dir) / (row.CRATER_ID + '_' +
-                                                   identifier + '_eqc.tif')
-        utils.clip_advanced(dem, in_poly, 'geojson', clipped_raster_fname)
-
-        # reproject it to either equirectangular (no proj) or lambert
-        crs_rasterio = rio.crs.CRS.from_wkt(crs_local)
+        print(index)
         clipped_raster_fname_final = Path(output_dir) / (row.CRATER_ID + '_' +
                                                    identifier + '.tif')
+        if clipped_raster_fname_final.is_file():
+            None
+        else:
+            try:
+                crs_local = select_proj(row.lon,row.lat)
+                crater_center = gpd.GeoSeries(row.geometry)
+                crater_center.crs = gdf.crs
+                crater_center_crs_local = crater_center.to_crs(crs_local)
+                buff = crater_center_crs_local.buffer((row.diam / 2.0) * clip_distance)
+                envelope = buff.envelope
+                envelope_crs_dem = envelope.to_crs(crs_dem)
+                bbox = envelope_crs_dem.bounds.values[0]
 
-        utils.reproject_raster(clipped_raster_fname, crs_rasterio,
-                          clipped_raster_fname_final)
+                clipped_raster_fname = Path(output_dir) / (row.CRATER_ID + '_' +
+                                                           identifier + '_eqc.tif')
 
+                utils.clip_from_bbox(dem, bbox, clipped_raster_fname)
 
+                # reproject it to either equirectangular (no proj) or lambert
+                crs_rasterio = rio.crs.CRS.from_wkt(crs_local)
+                clipped_raster_fname_final = Path(output_dir) / (row.CRATER_ID + '_' +
+                                                           identifier + '.tif')
+
+                utils.reproject_raster(clipped_raster_fname, crs_rasterio,
+                                       clipped_raster_fname_final)
+
+            except:
+                print("ERROR")
 
 
 def clip_raster_to_crater(location_of_craters, dem, clip_distance,
@@ -299,6 +311,41 @@ clip_raster_to_crater(location_of_craters, dem, clip_distance,
                           
 clip_raster_to_crater(location_of_craters, orthoimage, clip_distance,
                           output_dir_ortho, identifier_orthoimage, craterID = None)
+                          
+                          
+# Kaguya Rayed craters
+location_of_craters = '/home/nilscp/GIT/crater_morphometry/data/rayed_craters/rayed_craters_centroids.shp'
+dem = "/media/nilscp/pampa/Kaguya/SLDEM2013/SLDEM2013.vrt"
+orthoimage = "/media/nilscp/pampa/Kaguya/TCO_MAP_02/TCO_MAP_02.vrt"
+clip_distance = 8.0
+output_dir = "/media/nilscp/pampa/ANALYSIS/2022/SLDEM2013_RayedCraters/"
+output_dir_ortho = "/media/nilscp/pampa/ANALYSIS/2022/TCOMAP_RayedCraters/"
+identifier_dem = "Kaguya_SLDEM2013"
+identifier_orthoimage = "Kaguya_TCOMAP_02"
+
+clip_raster_to_crater(location_of_craters, dem, clip_distance,
+                          output_dir, identifier_dem, craterID = None)
+                          
+clip_raster_to_crater(location_of_craters, orthoimage, clip_distance, 
+output_dir_ortho, identifier_orthoimage, craterID = None)
+
+# Kaguya coldspots
+location_of_craters = '/home/nilscp/QGIS/Moon/Williams2018/coldspots_larger_than_250m_EQC.shp'
+dem = "/media/nilscp/pampa/Kaguya/SLDEM2013/SLDEM2013.vrt"
+orthoimage = "/media/nilscp/pampa/Kaguya/TCO_MAP_02/TCO_MAP_02.vrt"
+clip_distance = 8.0
+output_dir = "/media/nilscp/pampa/ANALYSIS/2022/SLDEM2013_ColdSpots/"
+output_dir_ortho = "/media/nilscp/pampa/ANALYSIS/2022/TCOMAP_ColdSpots/"
+identifier_dem = "Kaguya_SLDEM2013"
+identifier_orthoimage = "Kaguya_TCOMAP_02"
+
+clip_raster_to_crater(location_of_craters, dem, clip_distance,
+                          output_dir, identifier_dem, craterID = None)
+                          
+clip_raster_to_crater(location_of_craters, orthoimage, clip_distance, 
+output_dir_ortho, identifier_orthoimage, craterID = None)
+
+
 
 '''
     
