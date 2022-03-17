@@ -9,6 +9,7 @@ import numpy as np
 import geopandas as gpd
 import pandas as pd
 import rasterio as rio
+from tqdm import tqdm
 
 '''
 This script will only work if the columns in the <location of craters> 
@@ -228,9 +229,8 @@ def iterrows_calculations(gdf, dem, crs_dem, clip_distance, output_dir,
                           identifier):
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    for index, row in tqdm(gdf.iterrows(), total=gdf.shape[0]):
 
-    for index, row in gdf.iterrows():
-        print(index)
         clipped_raster_fname_final = Path(output_dir) / (row.CRATER_ID + '_' +
                                                    identifier + '.tif')
         if clipped_raster_fname_final.is_file():
@@ -258,6 +258,8 @@ def iterrows_calculations(gdf, dem, crs_dem, clip_distance, output_dir,
 
                 utils.reproject_raster(clipped_raster_fname, crs_rasterio,
                                        clipped_raster_fname_final)
+
+                #clipped_raster_fname.unlink()
 
             except:
                 print("ERROR")
@@ -314,7 +316,7 @@ clip_raster_to_crater(location_of_craters, orthoimage, clip_distance,
                           
                           
 # Kaguya Rayed craters
-location_of_craters = '/home/nilscp/GIT/crater_morphometry/data/rayed_craters/rayed_craters_centroids.shp'
+location_of_craters = '/home/nilscp/GIT/crater_morphometry/data/rayed_craters/rayed_craters_centroids_kaguya.shp'
 dem = "/media/nilscp/pampa/Kaguya/SLDEM2013/SLDEM2013.vrt"
 orthoimage = "/media/nilscp/pampa/Kaguya/TCO_MAP_02/TCO_MAP_02.vrt"
 clip_distance = 8.0
@@ -333,7 +335,7 @@ output_dir_ortho, identifier_orthoimage, craterID = None)
 location_of_craters = '/home/nilscp/QGIS/Moon/Williams2018/coldspots_larger_than_250m_EQC.shp'
 dem = "/media/nilscp/pampa/Kaguya/SLDEM2013/SLDEM2013.vrt"
 orthoimage = "/media/nilscp/pampa/Kaguya/TCO_MAP_02/TCO_MAP_02.vrt"
-clip_distance = 8.0
+clip_distance = 16.0
 output_dir = "/media/nilscp/pampa/ANALYSIS/2022/SLDEM2013_ColdSpots/"
 output_dir_ortho = "/media/nilscp/pampa/ANALYSIS/2022/TCOMAP_ColdSpots/"
 identifier_dem = "Kaguya_SLDEM2013"
