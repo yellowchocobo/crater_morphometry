@@ -1,51 +1,39 @@
 import numpy as np
 import scipy
 import scipy.ndimage
+import sys
+
+sys.path.append("/home/nilscp/GIT/crater_morphometry")
 from scipy.optimize import curve_fit
-from scipy import optimize
+from rim_detection import rim_detection
+
+def argmin_values_along_axis(arr, value, axis):
+    argmin_idx = np.abs(arr - value).argmin(axis=axis)
+    shape = arr.shape
+    indx = list(np.ix_(*[np.arange(i) for i in shape]))
+    indx[axis] = np.expand_dims(argmin_idx, axis=axis)
+    return (np.squeeze(arr[tuple(indx)]), argmin_idx)
 
 def find_nearest(array, value):
-    '''
-    Find nearest value in array and return both the value and index.
-
-    Parameters
-    ----------
-    array : 1-D numpy array
-    value : value to search for
-
-    Returns
-    -------
-    array[idx] : float
-        actual value in array (can be different from the searched value).
-    idx : int
-        index of where this value is found.
-
-    '''
     array = np.asarray(array)
     idx = (np.abs(array - value)).argmin()
     return (array[idx], idx)
 
 def calc_R(x,y, xc, yc):
-    """ calculate the distance of each 2D points from the center (xc, yc) """
     return np.sqrt((x-xc)**2 + (y-yc)**2)
 
 def calc_D(c, x, y):
-    """ calculate the algebraic distance between the data points and the mean circle centered at c=(xc, yc) """
     Ri = calc_R(x, y, *c)
     return Ri - Ri.mean()
 
 def leastsq_circle(x,y):
+    xm = np.mean(x)
+    ym = np.mean(y)
+    center_estimate = xm, ym
     
-    xt = x[~np.isnan(x)]
-    yt = y[~np.isnan(y)]
-    
-    x_m = np.nanmean(xt)
-    y_m = np.nanmean(yt)
-    center_estimate = x_m, y_m
-    
-    center, ier = optimize.leastsq(calc_D, center_estimate, args=(xt,yt))    
+    center, ier = scipy.optimize.leastsq(calc_D, center_estimate, args=(x,y))
     xc, yc = center
-    Ri = calc_R(xt, yt, *center)
+    Ri = calc_R(x, y, *center)
     R = Ri.mean()
     residu = np.sum((Ri - R)**2)
     return xc, yc, R, residu
@@ -56,228 +44,136 @@ def power(x,a,b,c):
 def linear(x,a,b):
     return a*x + b
 
+def normalized_radius(distances,radius):
+    return np.divide(distances,radius,out=np.zeros_like(distances), where=radius!=0)
 
-def geomorphometry_cs(z, dist, dist_norm):
-    
-    # Normalized distances along a cross section
-    A , idxA = find_nearest(dist_norm,0.0)
-    B , idxB = find_nearest(dist_norm,0.1)
-    C , idxC = find_nearest(dist_norm,0.7)
-    D , idxD = find_nearest(dist_norm,0.8)
-    E , idxE = find_nearest(dist_norm,0.9)
-    F , idxF = find_nearest(dist_norm,1.0)
-    G , idxG = find_nearest(dist_norm,1.2)
-    H , idxH = find_nearest(dist_norm,2.0)
-    
-    # upper cavity wall roc
-    ucw_roc_val = radius_of_curvature(z[idxD:idxF+1], dist[idxD:idxF+1])
-    
-    # upper flank roc
-    uf_roc_val = radius_of_curvature(z[idxF:idxG+1], dist[idxF:idxG+1])
-    
-    # cavity shape exponent
-    cse_val = cavity_shape_exponent(z[idxB:idxE+1], dist[idxB:idxE+1])
-    
-    # middle cavity slope  
-    slope_mcw = cavity_slope(z[idxC:idxE+1], dist[idxC:idxE+1])
-    
-    # upper cavity slope
-    slope_ucw = cavity_slope(z[idxD:idxF+1], dist[idxD:idxF+1])
-    
-    # flank slope angle
-    slope_flank = np.abs(cavity_slope(z[idxF:idxG+1], dist[idxF:idxG+1]))
-    
-    # upper rim span
-    slope_urs = 180. -  (slope_ucw + slope_flank)
-    
-    # lower rim span
-    slope_lrs =  180. - (slope_mcw + slope_flank)
-    
-    # average rim height
-    h = z[idxF]
-    
-    # rim height from the minimum elevation beyond the rim (up to a distance of
-    # 2R)
-    hr = rim_height_above_minimum_height_beyond_rim(z[idxF], z[idxF:idxH])
-    
-    # calculate the depth (new way where the min along each cross section is taken)
-    depth = np.min(z)
-    
-    # flank rim decay length
-    frdl = rim_decay_length(z[idxF:idxH], dist[idxF:idxH], dist[idxF])
-    
-    # cavity rim decay length
-    crdl = rim_decay_length(z[idxA:idxF+1], dist[idxA:idxF+1], dist[idxF])
-    
-    
-    return (depth, h, hr, cse_val, slope_mcw, slope_ucw, slope_flank, slope_urs,
-            slope_lrs, frdl, crdl, ucw_roc_val, uf_roc_val)
+def geomorphometry_cross_section(ellipse_shp, crater_dem_detrended, is_extra_calc=False):
 
-    
-    
+    (z_detrended, yc_px, xc_px,
+     y_px_ell, x_px_ell, y_px_ell2, x_px_ell2,
+     crater_radius_px, dem_resolution) = rim_detection.load_ellipse(ellipse_shp, crater_dem_detrended)
 
-def radius_of_curvature(elevations_roc, distances_roc):
-    '''
-    
+    y_heights_px_ell, x_widths_px_ell, z_profiles_ell, distances_ell, cross_sections_ids_ell = rim_detection.extract_cross_sections_from_ellipse(
+        crater_radius_px, dem_resolution, y_px_ell2, x_px_ell2, yc_px,
+        xc_px, z_detrended)
 
-    Parameters
-    ----------
-    elevations_roc : TYPE
-        DESCRIPTION.
-    distances_roc : TYPE
-        DESCRIPTION.
+    # the middle of the cross-sections is the rim of the crater
+    n = np.int32(np.round(x_widths_px_ell.shape[1] / 2.0))
 
-    Returns
-    -------
-    roc_val : TYPE
-        DESCRIPTION.
+    x_1R = x_widths_px_ell[:, n]
+    y_1R = y_heights_px_ell[:, n]
+    h_d = (y_1R - yc_px) ** 2.0
+    w_d = (x_1R - xc_px) ** 2.0
+    radius = np.sqrt(h_d + w_d) * dem_resolution
 
-    '''
-    
+    # small variations but almost the same across all cross-sections
+    radius_norm = np.apply_along_axis(normalized_radius, 0, distances_ell, radius)
+
+    # It should actually be the same index for all cross sections
+    A, idxA = argmin_values_along_axis(arr=radius_norm, value=0.0, axis=1)
+    B, idxB = argmin_values_along_axis(arr=radius_norm, value=0.1, axis=1)
+    C, idxC = argmin_values_along_axis(arr=radius_norm, value=0.7, axis=1)
+    D, idxD = argmin_values_along_axis(arr=radius_norm, value=0.8, axis=1)
+    E, idxE = argmin_values_along_axis(arr=radius_norm, value=0.9, axis=1)
+    F, idxF = argmin_values_along_axis(arr=radius_norm, value=1.0, axis=1)
+    G, idxG = argmin_values_along_axis(arr=radius_norm, value=1.2, axis=1)
+    H, idxH = argmin_values_along_axis(arr=radius_norm, value=2.0, axis=1)
+
+    # middle cavity slope - C (0.7R) to E (0.9R)
+    mcw = cavity_slope(distances_ell, z_profiles_ell, idxC[0], idxE[0])
+
+    # upper cavity slope - D (0.8R) to F (1.0R)
+    ucw = cavity_slope(distances_ell, z_profiles_ell, idxD[0], idxF[0])
+
+    # Flank slope angle - F (1.0R) to G (1.2R)
+    fsa = np.abs(cavity_slope(distances_ell, z_profiles_ell, idxF[0], idxG[0]))
+
+    # absolute rim height
+    rim_height_absolute = np.array([z_prof[idxF[0]] for z_prof in z_profiles_ell])
+
+    # relative rim height
+    rim_height_relative = np.abs(np.array([z_prof[idxF[0]] - np.min(z_prof[idxF[0]:idxH[0]]) for z_prof in z_profiles_ell]))
+
+    # mininimum depth
+    min_depth = np.array([np.min(z_prof[idxA[0]:idxF[0]+1]) for z_prof in z_profiles_ell])
+
+    # center depth
+    center_depth = z_profiles_ell[0][0]
+
+    # cavity shape exponent   - F (1.0R) to G (1.2R) -  can contain NaN!
+    cse = np.array([cavity_shape_exponent(distances_ell[i][idxB[0]:idxE[0] + 1],
+                                              z_profiles_ell[i][idxB[0]:idxE[0] + 1]) for i in np.arange(z_profiles_ell.shape[0])])
+
+    if is_extra_calc:
+        # upper cavity wall roc  - D (0.8R) to F (1.0R) - radius_of_curvature
+        ucw_roc =  np.array([radius_of_curvature(distances_ell[i][idxD[0]:idxF[0]+1],
+                                          z_profiles_ell[i][idxD[0]:idxF[0]+1]) for i in
+                         np.arange(z_profiles_ell.shape[0])])
+
+        # upper flank roc  - F (1.0R) to G (1.2R) -  radius_of_curvature
+        uf_roc =  np.array([radius_of_curvature(distances_ell[i][idxF[0]:idxG[0]+1],
+                                          z_profiles_ell[i][idxF[0]:idxG[0]+1]) for i in
+                         np.arange(z_profiles_ell.shape[0])])
+
+        # flank rim decay  - F (1.0R) to H (2.0R) -  length rim_decay_length
+        frdl = np.array([rim_decay_length(distances_ell[i][idxF[0]:idxH[0]],
+                                          z_profiles_ell[i][idxF[0]:idxH[0]],
+                                          radius[i]) for i in
+                         np.arange(z_profiles_ell.shape[0])])
+
+        # cavity rim decay  - A (0.0R) to F (1.2R) -  length rim_decay_length
+        crdl = np.array([rim_decay_length(distances_ell[i][idxA[0]:idxF[0] + 1],
+                                          z_profiles_ell[i][
+                                          idxA[0]:idxF[0] + 1],
+                                          radius[i]) for i in
+                         np.arange(z_profiles_ell.shape[0])])
+
+        # upper rim span
+        slope_urs = 180. - (ucw + fsa)
+
+        # lower rim span
+        slope_lrs = 180. - (mcw + fsa)
+
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative,
+               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs)
+    else:
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative)
+
+
+def radius_of_curvature(distances, z_profile):
     try:
-        __, __, roc_val, __ = leastsq_circle(distances_roc, elevations_roc)
+        __, __, roc_val, __ = leastsq_circle(distances, z_profile)
             
     except:
         roc_val = np.nan
         
     return (roc_val)
 
-    
-def rim_decay_length(elevations_rdl, distances_rdl, distance_rim):
-    '''
-    
-
-    Parameters
-    ----------
-    elevations_rdl : TYPE
-        DESCRIPTION.
-    distances_rdl : TYPE
-        DESCRIPTION.
-    distance_rim : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    rdl : TYPE
-        DESCRIPTION.
-
-    '''
-    
-    try:
-        x1 = distances_rdl[:-1]
-        x2 = distances_rdl[1:]
-        y1 = elevations_rdl[:-1]
-        y2 = elevations_rdl[1:]
-        
-        dx = x2 - x1
-        dy = y2 - y1
-        
-        tetarad = np.arctan(dy/dx)
-        slope = np.abs(tetarad * (180./np.pi))
-        
-        # get the maximum slope
-        slope_max = np.nanmax(slope)
-        
-        # where it is the closest of half the maximum
-        __, idx_frdl = find_nearest(slope, slope_max/2.0)
-        
-        # get the distance at half the maximum
-        rdl = np.abs(distances_rdl[idx_frdl] - distance_rim)
-        
-    except:
-        rdl = np.nan
-        
+def rim_decay_length(distances, z_profile, radius):
+    slope_deg = np.abs(np.rad2deg(np.arctan(np.gradient(z_profile,distances))))
+    slope_max = np.max(slope_deg)
+    __, idx_frdl = find_nearest(slope_deg, slope_max / 2.0)
+    rdl = np.abs(distances[idx_frdl] - radius)
     return rdl
-    
-def cavity_shape_exponent(elevations_cse, distances_cse):
-    '''
-    
 
-    Parameters
-    ----------
-    elevations_cse : TYPE
-        DESCRIPTION.
-    distances_cse : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    cse : TYPE
-        DESCRIPTION.
-
-    '''
+def cavity_shape_exponent(distances, z_profile):
     try:
-        a, b = curve_fit(power, distances_cse, elevations_cse)
-            
+        a, b = curve_fit(power, distances, z_profile, po=[1e-3,1.5,-1000], maxfev=10000)
         exponent = a[1]
         cse = exponent
-        
     except:
         cse = np.nan
-        
     return (cse)
 
-def cavity_slope(elevations_cavity, distances_cavity):
-    '''
-    
+def cavity_slope(distances, z_profiles, starting_index, end_index):
 
-    Parameters
-    ----------
-    elevations_cavity : TYPE
-        DESCRIPTION.
-    distances_cavity : TYPE
-        DESCRIPTION.
+    slope_deg = np.array([
+        np.rad2deg(
+            np.arctan(
+                np.polyfit(distances[i][starting_index:end_index+1],
+                       z_profiles[i][starting_index:end_index+1],1)[0])) for i in range(z_profiles.shape[0])])
 
-    Returns
-    -------
-    slope : TYPE
-        DESCRIPTION.
-
-    '''
-       
-    try:
-        a, b = curve_fit(linear, distances_cavity, elevations_cavity)
-        xs = np.linspace(np.min(distances_cavity),np.max(distances_cavity),100)
-        ys = linear(xs,*a)
-        
-        #calculate the slope
-        tetarad = np.arctan((ys[-1] - ys[0]) / (xs[-1] - xs[0]))
-        slope = tetarad * (180./np.pi)
-        
-    except:
-        slope = np.nan
-        
-    return (slope)
-    
-
-
-def rim_height_above_minimum_height_beyond_rim(elevation_hr, 
-                                               elevations_beyond_rim):
-    '''
-    Parameters
-    ----------
-    elevation_hr : TYPE
-        DESCRIPTION.
-    elevations_beyond_rim : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    hr : TYPE
-        DESCRIPTION.
-
-    '''
-
-    try:
-        min_h = np.nanmin(elevations_beyond_rim)
-        
-        # height from the rim to the smallest elevation beyond the rim 
-        hr = elevation_hr - min_h
-        
-    except:
-        hr = np.nan
-        
-    return (hr)
+    return slope_deg
 
 
 def find_unique(y_height_final, x_width_final, dem_resolution, cs):

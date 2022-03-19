@@ -1,5 +1,6 @@
 from rasterio.plot import reshape_as_raster, reshape_as_image
 from pathlib import Path
+from numpy.lib.stride_tricks import sliding_window_view
 
 import copy
 import geopandas as gpd
@@ -18,8 +19,10 @@ from matplotlib.patches import Ellipse
 import matplotlib.pyplot as plt
 
 sys.path.append("/home/nilscp/GIT/crater_morphometry")
+sys.path.append("/home/nilscp/GIT/")
 import geomorphometry
 from preprocessing import DEM_extraction
+from rastertools import utils
 
 def xy_circle(crater_radius, height_crater_center_px, width_crater_center_px):
     '''
@@ -262,6 +265,10 @@ def local_maxima(array):
     return ((array >= np.roll(array, 1)) &
             (array >= np.roll(array, -1)))
 
+def fill_zero(array,interval):
+    array[-interval:] = 0.0
+    return (array)
+
 def maxima(array):
     return (array == np.max(array))
 
@@ -290,7 +297,43 @@ def local_elevations(y_heights_px, x_widths_px, z_profiles, cross_sections_ids):
 
     return (y_height_px_LE, x_width_px_LE ,elev_LE, idx_LE, cross_sections_LE)
 
-def maximum_slope_change(crater_radius, dem_resolution, y_heights_px,
+def maximum_slope_change(crater_radius, dem_resolution,
+                         y_heights_px, x_widths_px,
+                         z_profiles, cross_sections_ids):
+    """
+
+    Parameters
+    ----------
+    crater_radius
+    dem_resolution
+    y_heights_px
+    x_widths_px
+    z_profiles
+    cross_sections_ids
+
+    Returns
+    -------
+
+    Let's see if I need to have a better approximation of the distance in the future
+    """
+
+    interval = np.int32(np.ceil((crater_radius * 0.05) / (0.5 * dem_resolution)))
+
+    z_profiles_rolling_w = np.apply_along_axis(sliding_window_view, 1, z_profiles, interval)
+    slope_before = np.array([np.rad2deg(np.arctan(np.polyfit(np.arange(interval) * (dem_resolution / 2.0), zp.T, 1)[0])) for zp in z_profiles_rolling_w])
+    slope_before_padded = np.pad(slope_before, [(0, 0), (0, interval - 1)], mode='constant') # fill with zeros
+    slope_after = np.roll(slope_before_padded, interval, axis=1)
+    delta_slope = slope_after - slope_before_padded
+    idx_CS = np.apply_along_axis(maxima, 1, delta_slope)
+    y_height_px_CS = y_heights_px[idx_CS]
+    x_width_px_CS = x_widths_px[idx_CS]
+    elev_CS = z_profiles[idx_CS]
+    cross_sections_CS = cross_sections_ids[idx_CS]
+
+    return (y_height_px_CS, x_width_px_CS, elev_CS, idx_CS, cross_sections_CS)
+
+
+def maximum_slope_change2(crater_radius, dem_resolution, y_heights_px,
                          x_widths_px, z_profiles, distances,
                          cross_sections_ids):
 
@@ -348,6 +391,45 @@ def find_nearest(array, value):
 def arange(array):
     return (array * np.arange(array.size))
 
+
+
+def extract_cross_sections_from_ellipse(crater_radius_px, dem_resolution,
+                          y_height_crater_ellipse_px, x_width_crater_ellipse_px,
+                          y_height_crater_center_px, x_width_crater_center_px,
+                          z_detrended):
+
+    n_points_along_cs = np.int32(np.ceil(2.0 * crater_radius_px) * 2.0)
+
+    # The circle is always divided in 512 camemberts :)
+    z_profiles = np.ones((512,n_points_along_cs))
+    y_heights_px = np.ones((512,n_points_along_cs))
+    x_widths_px = np.ones((512,n_points_along_cs))
+    cross_sections_ids = np.apply_along_axis(arange, 0, np.ones((512, n_points_along_cs)))
+
+    # this step avoid a huge bottleneck in the script
+    z_detrended = scipy.ndimage.spline_filter(z_detrended, order=3)
+
+    # This step takes lot of time
+    for ix in range(len(y_height_crater_ellipse_px)):
+        # find the pixel coordinates
+        height_2R = y_height_crater_ellipse_px[ix]
+        width_2R = x_width_crater_ellipse_px[ix]
+
+        # the distance is calculated, should be equal to two times the crater_radius
+        y_heights_px[ix] = np.linspace(y_height_crater_center_px, height_2R, n_points_along_cs)
+        x_widths_px[ix] = np.linspace(x_width_crater_center_px, width_2R, n_points_along_cs)
+
+        # Extract the values along the line, using cubic interpolation and the map coordinates
+        # if prefilter = True --> Huge bottleneck!!!
+        z_profiles[ix] = scipy.ndimage.map_coordinates(z_detrended, np.vstack((y_heights_px[ix], x_widths_px[ix])), order=3, prefilter=False)
+
+    # calculate the crater_radius to the global maximum elevation
+    h_d = (y_heights_px - y_height_crater_center_px)** 2.0
+    w_d = (x_widths_px - x_width_crater_center_px)** 2.0
+    distances = np.sqrt(h_d + w_d) * dem_resolution
+
+    return y_heights_px, x_widths_px, z_profiles, distances, cross_sections_ids
+
 def extract_cross_sections(crater_radius_px, dem_resolution,
                           y_height_crater_center_px,
                           x_width_crater_center_px,
@@ -358,9 +440,7 @@ def extract_cross_sections(crater_radius_px, dem_resolution,
         2.0 * crater_radius_px,
         y_height_crater_center_px, x_width_crater_center_px)
 
-
-    n_points_along_cs = np.int32(
-        np.ceil(2.0 * crater_radius_px) * 2.0)
+    n_points_along_cs = np.int32(np.ceil(2.0 * crater_radius_px) * 2.0)
 
     # The circle is always divided in 512 camemberts :)
     z_profiles = np.ones((512,n_points_along_cs))
@@ -394,8 +474,7 @@ def extract_cross_sections(crater_radius_px, dem_resolution,
 
 
 def detect_potential_rim_candidates(y_heights_px, x_widths_px, z_profiles,
-                                    crater_radius, cross_sections_ids,
-                                    distances, dem_resolution):
+                                    crater_radius, cross_sections_ids, dem_resolution):
     '''
     Routine to extract the maximum elevations, local minima elevations and
     max. break in slope elevations from a given crater.
@@ -431,8 +510,7 @@ def detect_potential_rim_candidates(y_heights_px, x_widths_px, z_profiles,
 
     (y_height_px_CS, x_width_px_CS ,elev_CS, idx_CS, cross_sections_CS) = (
     maximum_slope_change(crater_radius, dem_resolution, y_heights_px,
-                         x_widths_px, z_profiles, distances,
-                         cross_sections_ids))
+                         x_widths_px, z_profiles, cross_sections_ids))
 
     return (y_height_px_ME, x_width_px_ME, elev_ME, idx_ME, cross_sections_ME,
             y_height_px_LE, x_width_px_LE, elev_LE, idx_LE, cross_sections_LE,
@@ -918,7 +996,6 @@ def first_run(crater_dem, crater_radius, index):
                                                           z_profiles,
                                                           crater_radius,
                                                           cross_sections_ids,
-                                                          distances,
                                                           dem_resolution))
 
     #---------------------------------------------------------------------------
@@ -1413,7 +1490,61 @@ def main(location_of_craters, dem_folder, shp_folder,
             except:
                 print("some problem here")
 
-def load_ellipse_candidate(crater_dem, dem_detrended, folder):
+def world_to_pixel_coordinates(x, y, dem_bbox, dem_resolution):
+    ulx, uly = dem_bbox[0], dem_bbox[3]
+    x_px = (x - ulx) / dem_resolution
+    y_px = (uly - y) / dem_resolution
+    return (x_px, y_px)
+
+def load_ellipse(ellipse_shp, crater_dem_detrended):
+    """
+    ellipse_shp = "/home/nilscp/tmp/fresh_impact_craters/shapefiles/crater0000_LROKaguyaDEM_detrended_ellipse_candidate2_polygon.shp"
+    crater_dem_detrended = "/home/nilscp/tmp/fresh_impact_craters/dem_detrended/crater0000_LROKaguyaDEM_detrended.tif"
+    """
+
+    # Load dem_detrended
+    with rio.open(crater_dem_detrended) as src:
+        z_detrended = reshape_as_image(src.read())[:, :, 0]
+        meta = src.profile
+
+    # infer dem resolution from the crater dem
+    dem_resolution = meta['transform'][0]
+    bbox = utils.get_raster_bbox(crater_dem_detrended)
+
+    # Extract geo-information from the ellipse shapefile
+    gdf = gpd.read_file(ellipse_shp)
+    x,y = gdf.geometry.iloc[0].exterior.xy
+    centroid = gdf.geometry.iloc[0].centroid
+    xc,yc = centroid.xy[0].tolist()[0], centroid.xy[1].tolist()[0]
+
+    # Re-create ellipse from points of shapefile ellipse
+    ell = EllipseModel()
+    ell.estimate(np.column_stack((x, y)))
+    xy_ell = ell.predict_xy(np.linspace(0.0, 2 * np.pi, 512))
+    ell_param = ell.params
+
+    # Create ellipse at two time the distance
+    ell2 = EllipseModel()
+    ell2_param = [ell_param[0],ell_param[1],ell_param[2]*2.0,ell_param[3]*2.0,ell_param[4]]
+    ell2.params = ell2_param
+    xy_ell2 = ell2.predict_xy(np.linspace(0.0, 2 * np.pi, 512))
+
+    # Convert to pixel coordinates for extracting map coordinates
+    x_ell = xy_ell[:, 0]
+    y_ell = xy_ell[:, 1]
+    x_ell2 = xy_ell2[:, 0]
+    y_ell2 = xy_ell2[:, 1]
+
+    x_px_ell, y_px_ell = world_to_pixel_coordinates(x_ell, y_ell, bbox, dem_resolution)
+    x_px_ell2, y_px_ell2 = world_to_pixel_coordinates(x_ell2, y_ell2, bbox, dem_resolution)
+    xc_px, yc_px = world_to_pixel_coordinates(np.array(xc), np.array(yc), bbox, dem_resolution)
+
+    crater_radius_px = ((ell_param[2] + ell_param[3]) / 2.0) / dem_resolution
+
+    return (z_detrended, yc_px, xc_px, y_px_ell, x_px_ell, y_px_ell2, x_px_ell2, crater_radius_px, dem_resolution)
+
+
+def load_shapefiles(crater_dem, dem_detrended, folder):
 
     crater_dem = Path(crater_dem)
     dem_detrended = Path(dem_detrended)
