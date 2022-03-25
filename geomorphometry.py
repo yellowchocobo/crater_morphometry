@@ -47,11 +47,96 @@ def linear(x,a,b):
 def normalized_radius(distances,radius):
     return np.divide(distances,radius,out=np.zeros_like(distances), where=radius!=0)
 
-def geomorphometry_cross_section(ellipse_shp, crater_dem_detrended, is_extra_calc=False):
+def geomorphometry_cross_section_pts(point_shp, ellipse_shp, crater_dem_detrended, inner_t, outer_t, is_extra_calc=False):
+
+    (z_detrended, yc_px, xc_px,
+     y_px_pts, x_px_pts, y_px_pts_2R, x_px_pts_2R,
+     dem_resolution, crater_radius_px) = rim_detection.load_pts(point_shp, ellipse_shp, crater_dem_detrended, inner_t, outer_t)
+
+    y_heights_px_pts, x_widths_px_pts, z_profiles_pts, distances_pts, radius, cross_sections_ids_pts = rim_detection.extract_cross_sections_from_pts(
+        crater_radius_px, dem_resolution, y_px_pts, x_px_pts, y_px_pts_2R, x_px_pts_2R, yc_px,
+        xc_px, z_detrended)
+
+    # small variations but almost the same across all cross-sections
+    radius_norm = np.apply_along_axis(normalized_radius, 0, distances_pts, radius)
+
+    # It should actually be the same index for all cross sections
+    A, idxA = argmin_values_along_axis(arr=radius_norm, value=0.0, axis=1)
+    B, idxB = argmin_values_along_axis(arr=radius_norm, value=0.1, axis=1)
+    C, idxC = argmin_values_along_axis(arr=radius_norm, value=0.7, axis=1)
+    D, idxD = argmin_values_along_axis(arr=radius_norm, value=0.8, axis=1)
+    E, idxE = argmin_values_along_axis(arr=radius_norm, value=0.9, axis=1)
+    F, idxF = argmin_values_along_axis(arr=radius_norm, value=1.0, axis=1)
+    G, idxG = argmin_values_along_axis(arr=radius_norm, value=1.2, axis=1)
+    H, idxH = argmin_values_along_axis(arr=radius_norm, value=2.0, axis=1)
+
+    # middle cavity slope - C (0.7R) to E (0.9R)
+    mcw = cavity_slope(distances_pts, z_profiles_pts, idxC[0], idxE[0])
+
+    # upper cavity slope - D (0.8R) to F (1.0R)
+    ucw = cavity_slope(distances_pts, z_profiles_pts, idxD[0], idxF[0])
+
+    # Flank slope angle - F (1.0R) to G (1.2R)
+    fsa = np.abs(cavity_slope(distances_pts, z_profiles_pts, idxF[0], idxG[0]))
+
+    # absolute rim height
+    rim_height_absolute = np.array([z_prof[idxF[0]] for z_prof in z_profiles_pts])
+
+    # relative rim height
+    rim_height_relative = np.abs(np.array([z_prof[idxF[0]] - np.min(z_prof[idxF[0]:idxH[0]]) for z_prof in z_profiles_pts]))
+
+    # mininimum depth
+    min_depth = np.array([np.min(z_prof[idxA[0]:idxF[0]+1]) for z_prof in z_profiles_pts])
+
+    # center depth
+    center_depth = z_profiles_pts[0][0]
+
+    # cavity shape exponent   - F (1.0R) to G (1.2R) -  can contain NaN!
+    cse = np.array([cavity_shape_exponent(distances_pts[i][idxB[0]:idxE[0] + 1],
+                                              z_profiles_pts[i][idxB[0]:idxE[0] + 1]) for i in np.arange(z_profiles_pts.shape[0])])
+    # Number of observations
+    nc = y_heights_px_pts.shape[0]
+
+    if is_extra_calc:
+        # upper cavity wall roc  - D (0.8R) to F (1.0R) - radius_of_curvature
+        ucw_roc =  np.array([radius_of_curvature(distances_pts[i][idxD[0]:idxF[0]+1],
+                                          z_profiles_pts[i][idxD[0]:idxF[0]+1]) for i in
+                         np.arange(z_profiles_pts.shape[0])])
+
+        # upper flank roc  - F (1.0R) to G (1.2R) -  radius_of_curvature
+        uf_roc =  np.array([radius_of_curvature(distances_pts[i][idxF[0]:idxG[0]+1],
+                                          z_profiles_pts[i][idxF[0]:idxG[0]+1]) for i in
+                         np.arange(z_profiles_pts.shape[0])])
+
+        # flank rim decay  - F (1.0R) to H (2.0R) -  length rim_decay_length
+        frdl = np.array([rim_decay_length(distances_pts[i][idxF[0]:idxH[0]],
+                                          z_profiles_pts[i][idxF[0]:idxH[0]],
+                                          radius[i]) for i in
+                         np.arange(z_profiles_pts.shape[0])])
+
+        # cavity rim decay  - A (0.0R) to F (1.2R) -  length rim_decay_length
+        crdl = np.array([rim_decay_length(distances_pts[i][idxA[0]:idxF[0] + 1],
+                                          z_profiles_pts[i][
+                                          idxA[0]:idxF[0] + 1],
+                                          radius[i]) for i in
+                         np.arange(z_profiles_pts.shape[0])])
+
+        # upper rim span
+        slope_urs = 180. - (ucw + fsa)
+
+        # lower rim span
+        slope_lrs = 180. - (mcw + fsa)
+
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative,
+               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs, nc)
+    else:
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative, nc)
+
+def geomorphometry_cross_section_ellipse(ellipse_shp, crater_dem_detrended, is_extra_calc=False):
 
     (z_detrended, yc_px, xc_px,
      y_px_ell, x_px_ell, y_px_ell2, x_px_ell2,
-     crater_radius_px, dem_resolution) = rim_detection.load_ellipse(ellipse_shp, crater_dem_detrended)
+     dem_resolution, crater_radius_px) = rim_detection.load_ellipse(ellipse_shp, crater_dem_detrended)
 
     y_heights_px_ell, x_widths_px_ell, z_profiles_ell, distances_ell, cross_sections_ids_ell = rim_detection.extract_cross_sections_from_ellipse(
         crater_radius_px, dem_resolution, y_px_ell2, x_px_ell2, yc_px,
@@ -103,6 +188,8 @@ def geomorphometry_cross_section(ellipse_shp, crater_dem_detrended, is_extra_cal
     # cavity shape exponent   - F (1.0R) to G (1.2R) -  can contain NaN!
     cse = np.array([cavity_shape_exponent(distances_ell[i][idxB[0]:idxE[0] + 1],
                                               z_profiles_ell[i][idxB[0]:idxE[0] + 1]) for i in np.arange(z_profiles_ell.shape[0])])
+    # Number of observations
+    nc = 512
 
     if is_extra_calc:
         # upper cavity wall roc  - D (0.8R) to F (1.0R) - radius_of_curvature
@@ -135,9 +222,9 @@ def geomorphometry_cross_section(ellipse_shp, crater_dem_detrended, is_extra_cal
         slope_lrs = 180. - (mcw + fsa)
 
         return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative,
-               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs)
+               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs, nc)
     else:
-        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative)
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative, nc)
 
 
 def radius_of_curvature(distances, z_profile):
@@ -158,7 +245,7 @@ def rim_decay_length(distances, z_profile, radius):
 
 def cavity_shape_exponent(distances, z_profile):
     try:
-        a, b = curve_fit(power, distances, z_profile, po=[1e-3,1.5,-1000], maxfev=10000)
+        a, b = curve_fit(power, distances, z_profile, p0=[1e-3,1.5,-1000], maxfev=10000)
         exponent = a[1]
         cse = exponent
     except:
@@ -175,134 +262,41 @@ def cavity_slope(distances, z_profiles, starting_index, end_index):
 
     return slope_deg
 
+def geormorph_columns():
 
-def find_unique(y_height_final, x_width_final, dem_resolution, cs):
-    '''
-    
+    columns = ['diameter_median', 'diameter_uncertainty', 'diameter_25p',
+    'diameter_75p', 'diameter_max', 'depth_median', 'depth_uncertainty',
+    'depth_25p', 'depth_75p', 'depth_max', 'rim_height_absolute_median',
+    'rim_height_absolute_uncertainty',
+    'rim_height_absolute_25p', 'rim_height_absolute_75p',
+    'rim_height_absolute_max', 'rim_height_relative_median',
+    'rim_height_relative_uncertainty',
+    'rim_height_relative_25p', 'rim_height_relative_75p',
+    'rim_height_relative_max', 'middle_cavity_slope_median',
+    'middle_cavity_slope_uncertainty',
+    'middle_cavity_slope_25p', 'middle_cavity_slope_75p',
+    'middle_cavity_slope_max', 'upper_cavity_slope_median',
+    'upper_cavity_slope_uncertainty',
+    'upper_cavity_slope_25p', 'upper_cavity_slope_75p',
+    'upper_cavity_slope_max', 'cavity_shape_exponent_median',
+    'cavity_shape_exponent_uncertainty',
+    'cavity_shape_exponent_25p', 'cavity_shape_exponent_75p',
+    'cavity_shape_exponent_max', 'upper_cavity_roc_median',
+    'upper_cavity_roc_uncertainty',
+    'upper_cavity_roc_25p', 'upper_cavity_roc_75p', 'upper_cavity_roc_max',
+    'upper_flank_roc_median', 'upper_flank_roc_uncertainty',
+    'upper_flank_roc_25p', 'upper_flank_roc_75p', 'upper_flank_roc_max',
+    'lower_rim_span_median', 'lower_rim_span_uncertainty',
+    'lower_rim_span_25p', 'lower_rim_span_75p', 'lower_rim_span_max',
+    'upper_rim_span_median', 'upper_rim_span_uncertainty',
+    'upper_rim_span_25p', 'upper_rim_span_75p', 'upper_rim_span_max',
+    'flank_slope_median', 'flank_slope_uncertainty',
+    'flank_slope_25p', 'flank_slope_75p', 'flank_slope_max',
+    'cavity_rim_decay_length_median', 'cavity_rim_decay_length_uncertainty',
+    'cavity_rim_decay_length_25p', 'cavity_rim_decay_length_75p',
+    'cavity_rim_decay_length_max',
+    'flank_rim_decay_length_median', 'flank_rim_decay_length_uncertainty',
+    'flank_rim_decay_length_25p', 'flank_rim_decay_length_75p',
+    'flank_rim_decay_length_max']
 
-    Parameters
-    ----------
-    x_rim : TYPE
-        DESCRIPTION.
-    y_rim : TYPE
-        DESCRIPTION.
-    dem_resolution : TYPE
-        DESCRIPTION.
-    cs : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    unique_i : TYPE
-        DESCRIPTION.
-    prof_uni_detected : TYPE
-        DESCRIPTION.
-
-    '''
-    
-    # create empty array
-    idx_detected = np.zeros((len(y_height_final),2))
-    idx_detected[:,0] = (y_height_final)/dem_resolution # transform to pixel coord
-    idx_detected[:,1] = (x_width_final)/dem_resolution # transform to pixel coord
-    idx_detected = idx_detected.astype('int')
-    
-    # Find unique indices from detected 
-    __, unique_index = np.unique(["{}{}".format(i, j) for i,j in idx_detected], 
-                          return_index=True)
-    
-    unique_i = idx_detected[unique_index,:] 
-    prof_uni_detected = cs[unique_index] #still contain zeros
-    
-    return (unique_i, prof_uni_detected)
-
-
-def calculate(y_height_final, x_width_final, profile_final,
-              crater_radius,
-              z, dem_resolution,
-              y_height_center_px, x_width_center_px):
-
-    # Find unique indices from detected rim
-    # Note that the values are transfored to pixel coordinates in this step
-    # (hidden in the function)
-    index_unique, cs_unique = find_unique(y_height_final, x_width_final,
-                                          dem_resolution, profile_final)
-
-    # This step can be avoided can use the predict of the ellipsoid with
-    # 2 a and 2b (will this be correct?)
-
-    # 2r from the center of the  crater (the origin is included here)
-    idx_circle2 = np.zeros((len(index_unique), 2))
-    idx_circle2[:, 0] = ((index_unique[:,
-                          0] - y_height_center_px) * 2.) + y_height_center_px
-    idx_circle2[:, 1] = ((index_unique[:,
-                          1] - x_width_center_px) * 2.) + x_width_center_px
-
-    # samples at half the dem_resolution
-    num = np.int(np.ceil(2.0 * crater_radius / dem_resolution) * 2.0)
-
-    # I need to define all empty arrays here
-    (diameter, depth, h, hr, crdl, frdl, slope_urs, slope_lrs,
-     slope_fsa, slope_ucw, slope_mcw, cse, uf_roc_val, ucw_roc_val) = [
-        np.zeros(len(idx_circle2)) for _ in range(14)]
-
-    # dictionary to save the cross sections to (can be save as a geopandas)
-    crossSections = dict()
-    XSections = dict()
-    YSections = dict()
-
-    # so it's only looping through cross sections where the rim composite
-    # function resulted in a detection
-
-    for i, ind in enumerate(idx_circle2):
-        ncol = ind[0]
-        nrow = ind[1]
-
-        jj = index_unique[i]
-        ncol_1r = jj[0]
-        nrow_1r = jj[1]
-
-        # the distance is calculated, should be equal to two times the crater_radius
-        cols, rows = np.linspace(y_height_center_px, ncol, num), np.linspace(
-            x_width_center_px, nrow, num)
-
-        # Extract the values along the line, using cubic interpolation and the
-        # map coordinates
-        z_extracted = scipy.ndimage.map_coordinates(z, np.vstack(
-            (cols, rows)))  # changed here
-
-        # calculate the distance along the profile 2
-        dist_px = np.sqrt(((cols - y_height_center_px) ** 2.) + (
-                    (rows - x_width_center_px) ** 2.))
-        dist = dist_px * dem_resolution  # I guess it is what they call s in Geiger
-
-        # I should here save each profile that could later on be used (either saved in a dictionary or
-        # directly save to a text file. I would prefer first to be saved in a dictionary and then
-        # save to a text file) HERE MODIFY
-        crossSections[i] = z_extracted[:]
-        XSections[i] = cols
-        YSections[i] = rows
-
-        # ncol_1r and nrow_1r needs to be integer (This is dangerous as you
-        # can have altitude similar to the rim height outside of the rim!
-        # this needs to be fixed
-        # much better to choose the nearest heights and widths in terms of
-        # coordinates
-
-        value_nearest, idx_nearest = find_nearest(z_extracted, z[ncol_1r,
-                                                                 nrow_1r])
-
-        diameter[i] = dist[idx_nearest] * 2.0
-
-        # distance normalized
-        dist_norm = dist / dist[idx_nearest]
-
-        # geomorphometric calculations
-        (depth[i], h[i], hr[i], cse[i], slope_mcw[i], slope_ucw[i],
-         slope_fsa[i], slope_urs[i], slope_lrs[i], frdl[i], crdl[i],
-         ucw_roc_val[i], uf_roc_val[i]) = geomorphometry_cs(z_extracted, dist, dist_norm)
-
-    return (
-    ucw_roc_val, uf_roc_val, cse, slope_mcw, slope_ucw, slope_fsa, slope_lrs,
-    slope_urs, crdl, frdl,
-    h, hr, depth, diameter, len(idx_circle2), cs_unique, crossSections,
-    YSections, XSections)
+    return (columns)

@@ -51,139 +51,37 @@ def xy_circle(crater_radius, height_crater_center_px, width_crater_center_px):
     
     return (height_circle_coord, width_circle_coord)
 
-def detrending(crater_radius,
-               from_scaled_crater_radius, scaled_crater_radius_end,
-               elevations, 
-               dem_resolution, 
-               height_mesh, width_mesh, 
-               height_crater_center_px, width_crater_center_px, 
-               filterMedianStd, debugging=False):
-    
-    '''
-    Routine to fetch all the pixel values between SCALED_crater_radius_START and 
-    SCALED_crater_radius_END from the crater centre (e.g., between 2.0 R and 3.0 R
-    for detrending in a regional context and 0.9 and 1.1 for detrending
-    assymetries along ) 
+def detrending(crater_radius_px,
+               from_scaled_crater_radius, end_scaled_crater_radius,
+               elevations,
+               y_height_mesh, x_width_mesh,
+               y_height_crater_center_px, x_width_crater_center_px,
+               filterMedianStd):
 
-    Parameters
-    ----------
-    crater_radius : float
-        crater crater_radius in the unit of the proj. coordinate system (e.g., meters).
-    from_scaled_crater_radius : float
-        Distance (scaled with the crater_radius of the crater diameter) from which the
-        detrending step will be conducted. 
-    scaled_crater_radius_end : float
-        Distance (scaled with the crater_radius of the crater diameter) up to which the
-        detrending step will be conducted. 
-    elevations : numpy array
-        Numpy array containg elevations (either original or detrended values).
-    dem_resolution : float
-        resolution of the DEM in meters.
-    height_mesh : numpy array
-        mesh grid with the same dimension as the elevations.
-    width_mesh : numpy array
-        mesh grid with the same dimension as the elevations.
-    height_crater_center_px : int
-        centre of the crater in pixel coordinates.
-    width_crater_center_px : int
-        centre of the crater in pixel coordinates.
-    filterMedianStd : boolean
-        if True, values above the median of the elevation + one standard dev
-        and below the median of the elevation - one standard dev are discarded.
-        This allow 
-    debugging : boolean
-        if True returns coordinates where the detrending has been applied to
 
-    Returns
-    -------
-    detrended_elevation : numpy array 
-        Detrended elevations between the specified from_scaled_crater_radius and 
-        .
-        
-    Suggestions for improvements
-    -------
-    - I am sure the selection could be made in a much more smooth way. Check
-    https://stackoverflow.com/questions/49330080/numpy-2d-array-selecting-indices-in-a-circle.
-    This would be make this script much smaller and would avoid some unnecessary
-    looping. 
-    - Error message if, for some reasons, the from_scaled_crater_radius and scaled_crater_radius_end
-    result in the fetching of elevations values outside of the mapped area.
+            width = np.arange(0, elevations.shape[1])
+            height = np.arange(0, elevations.shape[0])
+            mask_from = (width[np.newaxis, :] - np.int32(np.round(x_width_crater_center_px))) ** 2 + (height[:, np.newaxis] - np.int32(np.round(y_height_crater_center_px))) ** 2 < (crater_radius_px * from_scaled_crater_radius) ** 2
+            mask_end = (width[np.newaxis, :] - np.int32(np.round(x_width_crater_center_px))) ** 2 + (height[:, np.newaxis] - np.int32(np.round(y_height_crater_center_px))) ** 2 < (crater_radius_px * end_scaled_crater_radius) ** 2
+            mask = np.logical_and(mask_end, ~mask_from)
 
-    '''
-    # in map coordinates       
-    height_circle_px, width_circle_px = xy_circle((from_scaled_crater_radius*crater_radius) / dem_resolution, 
-                       height_crater_center_px, width_crater_center_px)
-    
-    height_circle_px2, width_circle_px2 = xy_circle((scaled_crater_radius_end*crater_radius) / dem_resolution, 
-                       height_crater_center_px, width_crater_center_px)
-              
-    (height_circle_px, width_circle_px, height_circle_px2, width_circle_px2) = (np.round(height_circle_px).astype('int'), np.round(width_circle_px).astype('int'),
-                        np.round(height_circle_px2).astype('int'), np.round(width_circle_px2).astype('int'))
+            # elevations are extracted for the map coordinates
+            z_disk_selection = elevations[mask]
 
-    # number of values along each cross section
-    # sampled at two times the dem resolution
-    n_points_along_cs = np.int32((crater_radius / dem_resolution) * 2.0)
-    
-    # empty array
-    width_disk_selection_px = []
-    height_disk_selection_px = []
-    
-    # Looping through all the x-coordinates of the circle located at 2R
-    for i in range(len(height_circle_px)):
+            # and x- and y-coordinates in meters (this is correct now) # weird
+            height_disk_selection = y_height_mesh[mask]
+            width_disk_selection = x_width_mesh[mask]
 
-        # the starting coordinates move all the time and correspond to the 
-        # boundary of the 2R circle
-        height_cs_start = height_circle_px[i]
-        width_cs_start = width_circle_px[i]
-        
-        # the end coordinates correspond to the boundary of the 3R circle
-        height_cs_end = height_circle_px2[i]
-        width_cs_end = width_circle_px2[i]
-                
-        # the distance is calculated, should be equal to two times the crater_radius
-        (height_coord_cs, width_coord_cs) = (np.linspace(height_cs_start, height_cs_end, n_points_along_cs), 
-                        np.linspace(width_cs_start, width_cs_end, n_points_along_cs))
-        
-        # only integer here
-        (height_coord_cs, width_coord_cs) = (np.round(height_coord_cs).astype('int'), 
-                                    np.round(width_coord_cs).astype('int'))
-        
-        #need to get rid of repetitions
-        rep = np.zeros((len(height_coord_cs),2))
-        rep[:,0] = height_coord_cs
-        rep[:,1] = width_coord_cs
-        __, index = np.unique(["{}{}".format(ix, j) for ix,j in rep], 
-                              return_index=True)
-        
-        for i in index:
-            height_disk_selection_px.append(height_coord_cs[i])
-            width_disk_selection_px.append(width_coord_cs[i])
-    
-    
-    # these correspond to all coordinates between the slice of 2R and 3R                
-    height_disk_selection_px = np.array(height_disk_selection_px)
-    width_disk_selection_px = np.array(width_disk_selection_px)
-           
-    # elevations are extracted for the map coordinates
-    z = elevations[height_disk_selection_px,width_disk_selection_px]
- 
-    # and x- and y-coordinates in meters (this is correct now) # weird
-    height_disk_selection = height_mesh[height_disk_selection_px,width_disk_selection_px]
-    width_disk_selection = width_mesh[height_disk_selection_px,width_disk_selection_px]
-          
-    # the detrending routine is used (check that again)
-    Z = elevation_plane(height_disk_selection, width_disk_selection, 
-                           z, 
-                           height_mesh, width_mesh, 
-                           filterMedianStd)
-    
-    # the detrended linear plane is substracted to the data
-    detrended_elevation = elevations - Z
-    
-    if debugging:
-        return (height_disk_selection, width_disk_selection, z, detrended_elevation)
-    else:
-        return (detrended_elevation)
+            # the detrending routine is used (check that again)
+            detrended_plane = elevation_plane(height_disk_selection, width_disk_selection,
+                                z_disk_selection,
+                                y_height_mesh, x_width_mesh,
+                                filterMedianStd)
+
+            # the detrended linear plane is substracted to the data
+            detrended_elevation = elevations - detrended_plane
+
+            return (detrended_elevation)
 
 def elevation_plane(height_disk_selection, width_disk_selection,
                     z, 
@@ -266,7 +164,7 @@ def local_maxima(array):
             (array >= np.roll(array, -1)))
 
 def fill_zero(array,interval):
-    array[-interval:] = 0.0
+    array[:interval] = 0.0
     return (array)
 
 def maxima(array):
@@ -314,17 +212,24 @@ def maximum_slope_change(crater_radius, dem_resolution,
     Returns
     -------
 
-    Let's see if I need to have a better approximation of the distance in the future
+    I need to add a threshold over which
     """
 
     interval = np.int32(np.ceil((crater_radius * 0.05) / (0.5 * dem_resolution)))
+    if interval < 3:
+        interval = 3
 
     z_profiles_rolling_w = np.apply_along_axis(sliding_window_view, 1, z_profiles, interval)
     slope_before = np.array([np.rad2deg(np.arctan(np.polyfit(np.arange(interval) * (dem_resolution / 2.0), zp.T, 1)[0])) for zp in z_profiles_rolling_w])
     slope_before_padded = np.pad(slope_before, [(0, 0), (0, interval - 1)], mode='constant') # fill with zeros
     slope_after = np.roll(slope_before_padded, interval, axis=1)
     delta_slope = slope_after - slope_before_padded
-    idx_CS = np.apply_along_axis(maxima, 1, delta_slope)
+
+    # to avoid breaks in slope close to the centre of the crater
+    # get rid of slope values closer than 0.25 the normalized radius
+    threshold = np.int32(np.ceil((z_profiles.shape[1] / 2.0)*0.25))
+    delta_slope[:,:threshold] = np.zeros_like(delta_slope[:,:threshold])
+    idx_CS = np.apply_along_axis(maxima, 1, delta_slope) # np.amax could be used
     y_height_px_CS = y_heights_px[idx_CS]
     x_width_px_CS = x_widths_px[idx_CS]
     elev_CS = z_profiles[idx_CS]
@@ -391,7 +296,50 @@ def find_nearest(array, value):
 def arange(array):
     return (array * np.arange(array.size))
 
+def extract_cross_sections_from_pts(crater_radius_px, dem_resolution,
+                          y_height_pts_px, x_width_pts_px, y_height_2R_pts_px, x_width_2R_pts_px,
+                          y_height_crater_center_px, x_width_crater_center_px,
+                          z_detrended):
 
+    n_points_along_cs = np.int32(np.ceil(2.0 * crater_radius_px) * 2.0)
+
+    # The circle is always divided in 512 camemberts :)
+    z_profiles = np.ones((y_height_pts_px.shape[0],n_points_along_cs))
+    y_heights_px = np.ones((y_height_pts_px.shape[0],n_points_along_cs))
+    x_widths_px = np.ones((y_height_pts_px.shape[0],n_points_along_cs))
+    radius = np.ones((y_height_pts_px.shape[0]))
+    cross_sections_ids = np.apply_along_axis(arange, 0, np.ones((y_height_pts_px.shape[0], n_points_along_cs)))
+
+    # this step avoid a huge bottleneck in the script
+    z_detrended = scipy.ndimage.spline_filter(z_detrended, order=3)
+
+    # This step takes lot of time
+    for ix in range(len(y_height_2R_pts_px)):
+        # find the pixel coordinates
+        height_2R = y_height_2R_pts_px[ix]
+        width_2R = x_width_2R_pts_px[ix]
+
+        height_1R = y_height_pts_px[ix]
+        width_1R = x_width_pts_px[ix]
+
+        # the distance is calculated, should be equal to two times the crater_radius
+        y_heights_px[ix] = np.linspace(y_height_crater_center_px, height_2R, n_points_along_cs)
+        x_widths_px[ix] = np.linspace(x_width_crater_center_px, width_2R, n_points_along_cs)
+
+        # Extract the values along the line, using cubic interpolation and the map coordinates
+        # if prefilter = True --> Huge bottleneck!!!
+        z_profiles[ix] = scipy.ndimage.map_coordinates(z_detrended, np.vstack((y_heights_px[ix], x_widths_px[ix])), order=3, prefilter=False)
+
+        h_r = (height_1R - y_height_crater_center_px)** 2.0
+        w_r = (width_1R - x_width_crater_center_px)** 2.0
+        radius[ix] = np.sqrt(h_r + w_r) * dem_resolution
+
+    # calculate the crater_radius to the global maximum elevation
+    h_d = (y_heights_px - y_height_crater_center_px)** 2.0
+    w_d = (x_widths_px - x_width_crater_center_px)** 2.0
+    distances = np.sqrt(h_d + w_d) * dem_resolution
+
+    return y_heights_px, x_widths_px, z_profiles, distances, radius, cross_sections_ids
 
 def extract_cross_sections_from_ellipse(crater_radius_px, dem_resolution,
                           y_height_crater_ellipse_px, x_width_crater_ellipse_px,
@@ -400,7 +348,7 @@ def extract_cross_sections_from_ellipse(crater_radius_px, dem_resolution,
 
     n_points_along_cs = np.int32(np.ceil(2.0 * crater_radius_px) * 2.0)
 
-    # The circle is always divided in 512 camemberts :)
+    # The ellipse is always divided in 512 camemberts :)
     z_profiles = np.ones((512,n_points_along_cs))
     y_heights_px = np.ones((512,n_points_along_cs))
     x_widths_px = np.ones((512,n_points_along_cs))
@@ -843,13 +791,14 @@ def cloud_points_to_shapefile(y_height_px, x_width_px, elev, cross_sections,
 
     gdf.to_file(filename)
 
-def generated_detrended_dem(location_of_craters, scaling_factor, dem_folder,
-                            dem_detrended_folder, craterID=None, overwrite=False):
+def generated_detrended_dem(location_of_craters, scaling_factor, dem_folder, shp_folder,
+                            dem_detrended_folder, threshold_max=None, craterID=None, overwrite=False):
 
     dem_folder = Path(dem_folder)
     dems = list(sorted(dem_folder.glob("*.tif")))
     dem_detrended_dummy = Path(dem_detrended_folder) / 'dummy.tif'
     location_of_craters = Path(location_of_craters)
+    shp_folder = Path(shp_folder)
 
     # check if folder exists
     Path(dem_detrended_folder).mkdir(parents=True, exist_ok=True)
@@ -860,6 +809,8 @@ def generated_detrended_dem(location_of_craters, scaling_factor, dem_folder,
     # if a CRATER_ID is specified
     if craterID:
         gdf_selection = gdf[gdf.CRATER_ID == craterID]
+    elif threshold_max:
+        gdf_selection = gdf[gdf.diam < threshold_max]
     else:
         gdf_selection = gdf.copy()
 
@@ -878,37 +829,38 @@ def generated_detrended_dem(location_of_craters, scaling_factor, dem_folder,
 
             # infer dem resolution from the crater dem
             dem_resolution = meta['transform'][0]
+            dem_bbox = utils.get_raster_bbox(crater_dem)
 
             # height scaling factor for the SLDEM2015
             z = array * scaling_factor
 
             # -----------------------------------------------------------------
-            ######################## FINDING CENTRE OF IMAGE ##################
-
-            # do we always want the centre of the crater to be at the middle? kind of...
+            ######################## CREATE MESHGRID ###########################
             y_height = np.linspace(0, (z.shape[0] - 1) * dem_resolution, z.shape[0])
             x_width = np.linspace(0, (z.shape[1] - 1) * dem_resolution, z.shape[1])
-
-            # Crater centre in pixel coordinates
-            y_height_crater_center_px = np.int32(z.shape[0] / 2)
-            x_width_crater_center_px = np.int32(z.shape[1] / 2)
-
             y_height_mesh, x_width_mesh = np.meshgrid(y_height, x_width, indexing='ij')
+
+            # -----------------------------------------------------------------
+            ######################## FINDING CENTRE OF IMAGE ##################
+            filename_cc = (shp_folder / (row.CRATER_ID + '_initial_crater_centre.shp'))
+            gdf_center = gpd.read_file(filename_cc)
+            y_height_crater_center = np.array((gdf_center.geometry.iloc[0].xy[1]))[0]
+            x_width_crater_center = np.array((gdf_center.geometry.iloc[0].xy[0]))[0]
+            x_width_crater_center_px, y_height_crater_center_px = world_to_pixel_coordinates(
+                x_width_crater_center, y_height_crater_center, dem_bbox,
+                dem_resolution)
 
             # ---------------------------------------------------------------------------
             ###########################   DETRENDING 2R-3R   ###########################
 
             filterMedianStd = True  # use standard deviation removal
 
-            # Only a single detrending in first run
-            z_detrended = detrending(row.diam / 2.0,
-                                     2.0, 3.0,
-                                     z,
-                                     dem_resolution,
-                                     y_height_mesh, x_width_mesh,
-                                     y_height_crater_center_px,
-                                     x_width_crater_center_px,
-                                     filterMedianStd)
+            z_detrended = detrending((row.diam / 2.0)/dem_resolution,
+               2.0, 3.0,
+               z,
+               y_height_mesh, x_width_mesh,
+               y_height_crater_center_px, x_width_crater_center_px,
+               filterMedianStd)
 
             # ---------------------------------------------------------------------------
             ########################### SAVING DETRENDED DEM ###########################
@@ -1181,19 +1133,75 @@ def first_run(crater_dem, crater_radius, index):
     x_width_ellipse_coord = x_width_origin + new_ell_pred[:, 0] * dem_resolution
     y_height_ellipse_coord = y_height_origin - new_ell_pred[:, 1] * dem_resolution
 
-    x_width_ellipse_coord_px = x_width_origin + new_ell_pred[:, 0] * dem_resolution
-    y_height_ellipse_coord_px = y_height_origin - new_ell_pred[:, 1] * dem_resolution
-
     poly = Polygon(list(zip(x_width_ellipse_coord,y_height_ellipse_coord)))
     filename = (shp_folder / (dem_filename.name.split('.tif')[0] + '_ellipse_candidate2_polygon.shp'))
     gdf.geometry = [poly]
     gdf.to_file(filename)
 
-    poly = Polygon(list(zip(new_ell_pred[:, 0],new_ell_pred[:, 1])))
-    filename = (shp_folder / (dem_filename.name.split('.tif')[0] + '_ellipse_candidate2_polygon_px.shp'))
-    gdf.geometry = [poly]
-    gdf.to_file(filename)
+def is_within_disk_ellipse(ellipse_shp, point_shp, dem_resolution, dem_bbox, inner_t, outer_t):
 
+    ellipse_shp = Path(ellipse_shp)
+    point_shp = Path(point_shp)
+
+    # Extract geo-information from the ellipse shapefile
+    gdf = gpd.read_file(ellipse_shp)
+    x,y = gdf.geometry.iloc[0].exterior.xy
+    centroid = gdf.geometry.iloc[0].centroid
+    xc,yc = centroid.xy[0].tolist()[0], centroid.xy[1].tolist()[0]
+
+    # Re-create ellipse from points of shapefile ellipse
+    ell = EllipseModel()
+    ell.estimate(np.column_stack((np.array(x) - xc, np.array(y) - yc)))
+    ell_param = ell.params
+
+    # Create inner ellipse
+    ell_inner = EllipseModel()
+    ell_inner_param = [ell_param[0],ell_param[1],ell_param[2]*inner_t,ell_param[3]*inner_t,ell_param[4]]
+    ell_inner.params = ell_inner_param
+    xy_ell_inner = ell_inner.predict_xy(np.linspace(0.0, 2 * np.pi, 512))
+
+    # Create inner ellipse
+    ell_outer = EllipseModel()
+    ell_outer_param = [ell_param[0],ell_param[1],ell_param[2]*outer_t,ell_param[3]*outer_t,ell_param[4]]
+    ell_outer.params = ell_outer_param
+    xy_ell_outer = ell_outer.predict_xy(np.linspace(0.0, 2 * np.pi, 512))
+
+    # Convert back to correct world coordinates
+    x_inner = xy_ell_inner[:, 0] + xc
+    y_inner = xy_ell_inner[:, 1] + yc
+    x_outer = xy_ell_outer[:, 0] + xc
+    y_outer = xy_ell_outer[:, 1] + yc
+
+    p_inner = Polygon(np.column_stack((x_inner,y_inner)))
+    p_outer = Polygon(np.column_stack((x_outer,y_outer)))
+
+    gdf_filtered = is_within_ellipse2(p_inner, p_outer, point_shp)
+    x_width_pts = np.array([np.array(row.geometry.centroid.xy[0])[0] for index, row in gdf_filtered.iterrows()])
+    y_height_pts = np.array([np.array(row.geometry.centroid.xy[1])[0] for index, row in gdf_filtered.iterrows()])
+
+    # double the size
+    x_width_pts_2R = ((x_width_pts - xc) * 2.0) + xc
+    y_height_pts_2R = ((y_height_pts - yc) * 2.0) + yc
+
+    xc_px, yc_px = world_to_pixel_coordinates(xc, yc, dem_bbox, dem_resolution)
+    x_width_pts_px, y_height_pts_px = world_to_pixel_coordinates(x_width_pts, y_height_pts, dem_bbox, dem_resolution)
+    x_width_2R_pts_px, y_height_2R_pts_px = world_to_pixel_coordinates(x_width_pts_2R, y_height_pts_2R, dem_bbox, dem_resolution)
+    crater_radius_px = ((ell_param[2] + ell_param[3]) / 2.0) / dem_resolution
+
+    return (yc_px, xc_px, y_height_pts_px, x_width_pts_px, y_height_2R_pts_px, x_width_2R_pts_px, crater_radius_px)
+
+
+def is_within_ellipse2(p1, p2, point_shp):
+
+    gdf = gpd.read_file(point_shp)
+
+    index_selection = []
+    for index, row in gdf.iterrows():
+        if not row.geometry.within(p1):
+            if row.geometry.within(p2):
+                index_selection.append(index)
+
+    return (gdf.iloc[index_selection])
 
 def is_within_ellipse(p1, p2, y_height, x_width, elev, cross_section):
 
@@ -1208,239 +1216,8 @@ def is_within_ellipse(p1, p2, y_height, x_width, elev, cross_section):
 
     return (gdf.iloc[index_selection])
 
-
-def second_run(crater_dem, scaling_factor, y_height_newcenter,
-               x_width_newcenter, crater_radius_new):
-
-    dem_filename = Path(crater_dem)
-
-    # --------------------------------------------------------------------------
-    ###########################      LOADING DEM     ###########################
-
-    with rio.open(crater_dem) as src:
-        array = reshape_as_image(src.read())[:, :, 0]
-        meta = src.profile
-
-    # infer dem resolution from the crater dem
-    dem_resolution = meta['transform'][0]
-
-    # height scaling factor for the SLDEM2015
-    z = array * scaling_factor
-
-    # Origin of the raster (top left)
-    x_width_origin = meta['transform'][2]
-    y_height_origin = meta['transform'][5]
-
-    x_width_newcenter_px = np.int32(np.round(x_width_newcenter / dem_resolution))
-    y_height_newcenter_px = np.int32(np.round(y_height_newcenter /
-                                            dem_resolution))
-
-    y_height = np.linspace(0, (z.shape[0] - 1) * dem_resolution, z.shape[0])
-
-    x_width = np.linspace(0, (z.shape[1] - 1) * dem_resolution, z.shape[1])
-
-    y_height_mesh, x_width_mesh = np.meshgrid(y_height, x_width, indexing='ij')
-
-    #---------------------------------------------------------------------------
-    ###########################   DETRENDING 2R-3R   ###########################
-
-    filterMedianStd = True  # use standard deviation removal
-
-    # Only a single detrending in first run
-    z_detrended = detrending(crater_radius_new,
-                   2.0, 3.0,
-                   z,
-                   dem_resolution,
-                   y_height_mesh, x_width_mesh,
-                   y_height_newcenter_px, x_width_newcenter_px,
-                   filterMedianStd)
-
-    #---------------------------------------------------------------------------
-    ########################### SAVING DETRENDED DEM ###########################
-
-    meta_detrended = meta.copy()
-    meta_detrended['dtype'] = 'float64'
-
-    dem_detrended = np.reshape(z_detrended,
-                               (z_detrended.shape[0],
-                                z_detrended.shape[1],
-                                1))
-
-    dem_detrended_folder = dem_filename.parent.with_name('dem_detrended')
-    dem_detrended_folder.mkdir(parents=True, exist_ok=True)
-    dem_detrended_filename = (dem_detrended_folder / (
-            dem_filename.name.split('.tif')[0] + '_detrended.tif'))
-
-    with rio.open(dem_detrended_filename, 'w', **meta_detrended) as ds:
-        # reshape to rasterio raster format
-        ds.write(reshape_as_raster(dem_detrended))
-    # ---------------------------------------------------------------------------
-    ########################   DETRENDING 0.9R-1.1R   ##########################
-
-    filterMedianStd = False
-
-    # Only a single detrending in first run
-    z_detrended2 = detrending(crater_radius_new,
-                             0.9, 1.1,
-                             z_detrended,
-                             dem_resolution,
-                             y_height_mesh, x_width_mesh,
-                             y_height_newcenter_px,
-                             x_width_newcenter_px,
-                             filterMedianStd)
-
-    #---------------------------------------------------------------------------
-    ########################### SAVING DETRENDED DEM ###########################
-    meta_detrended2 = meta.copy()
-    meta_detrended2['dtype'] = 'float64'
-
-    dem_detrended2 = np.reshape(z_detrended2,
-                               (z_detrended2.shape[0],
-                                z_detrended2.shape[1],
-                                1))
-
-    dem_detrended_folder = dem_filename.parent.with_name('dem_detrended')
-    dem_detrended_folder.mkdir(parents=True, exist_ok=True)
-    dem_detrended_filename = (dem_detrended_folder / (
-            dem_filename.name.split('.tif')[0] + '_detrended2.tif'))
-
-    with rio.open(dem_detrended_filename, 'w', **meta_detrended2) as ds:
-        # reshape to rasterio raster format
-        ds.write(reshape_as_raster(dem_detrended2))
-
-    #---------------------------------------------------------------------------
-    ####### FINDING MAX ELEV., LOCAL MAX AND CHANGE IN ELEVATIONS ##############
-    (y_height_coord_ME, x_width_coord_ME, y_height_px_ME, x_width_px_ME,
-     elev_ME, profile_ME, y_height_coord_LE, x_width_coord_LE, y_height_px_LE,
-     x_width_px_LE, elev_LE, profile_LE, y_height_coord_BS, x_width_coord_BS,
-     y_height_px_BS, x_width_px_BS, elev_BS, prof_BS) = (
-        detect_maximum_and_local_elevations(y_height_mesh,
-                                            x_width_mesh,
-                                            y_height_newcenter_px,
-                                            x_width_newcenter_px,
-                                            z_detrended,
-                                            crater_radius_new,
-                                            dem_resolution))
-
-    # here it complains when I give the z_detrended2
-
-    #---------------------------------------------------------------------------
-    ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
-
-    # Maximum allowed radial discontinuity Drad
-    # (I should convert these values in cells)
-    maximum_shift_ME = 0.1 * crater_radius_new
-
-    # Distance of interest (searching distance)
-    maximum_shift_LE = 0.05 * crater_radius_new
-
-    (candidates_rim_composite, n_ME_not_used, gaplist, delta_distances) = (
-        rim_composite(y_height_coord_ME, x_width_coord_ME,
-                      y_height_px_ME, x_width_px_ME,
-                      elev_ME, profile_ME,
-                      y_height_coord_LE, x_width_coord_LE,
-                      y_height_px_LE, x_width_px_LE,
-                      elev_LE, profile_LE,
-                      y_height_mesh, x_width_mesh,
-                      y_height_newcenter_px, x_width_newcenter_px,
-                      maximum_shift_ME, maximum_shift_LE))
-
-    #---------------------------------------------------------------------------
-    ''' The stitching of the final rim composite returns 16 potential final 
-    rim composite candidates. A final step consists at selecting the rim 
-    which is the most complete by looking at the number of gaps and distances
-    between of points of the rim composite.'''
-    ################ STITCHING OF THE FINAL RIM COMPOSITE ######################
-    for i in range(np.shape(candidates_rim_composite)[0]):
-        a = np.mean(delta_distances[i]) + (0.5 * n_ME_not_used[i])
-        if i == 0:
-            b = a
-            c = i
-        else:
-            if a < b:
-                b = a
-                c = i
-
-    y_height_final = np.array(candidates_rim_composite[c][0, :])
-    x_width_final = np.array(candidates_rim_composite[c][1, :])
-    z_final = np.array(candidates_rim_composite[c][2, :])
-    profile_final = np.array(candidates_rim_composite[c][3, :])
-    flag_final = np.array(candidates_rim_composite[c][4, :])
-
-    #---------------------------------------------------------------------------
-    ############### SAVE POSITION OF THE FINAL RIM COMPOSITE ###################
-
-    df_xy_rim_comp = pd.DataFrame(
-        {'id': list(np.arange(len(x_width_final))),
-         'x': list(x_width_origin + x_width_final),
-         'y': list(y_height_origin - y_height_final)})
-
-    gdf_xy_rim_comp = gpd.GeoDataFrame(
-        df_xy_rim_comp.id,
-        geometry=gpd.points_from_xy(df_xy_rim_comp.x, df_xy_rim_comp.y,
-                                    crs=str(meta['crs'])))
-
-    shp_folder = dem_filename.parent.with_name('shapefiles')
-    shp_folder.mkdir(parents=True, exist_ok=True)
-
-    second_rim_comp = (shp_folder / (
-            dem_filename.name.split('.tif')[0] + '_second_rim_comp.shp'))
-
-    gdf_xy_rim_comp.to_file(second_rim_comp)
-
-    #---------------------------------------------------------------------------
-    ############### CALCULATION OF GEOMORPHOMETRY PARAMETERS ###################
-
-    data = geomorphometry.calculate(y_height, x_width,
-                             y_height_final, x_width_final,
-                             z_final, crater_radius_new,
-                             dem_detrended2, dem_resolution,
-                             y_height_newcenter_px, x_width_newcenter_px)
-
-    return (data)
-
-
-def geormorph_columns():
-
-    columns = ['diameter_median', 'diameter_uncertainty', 'diameter_25p',
-    'diameter_75p', 'diameter_max', 'depth_median', 'depth_uncertainty',
-    'depth_25p', 'depth_75p', 'depth_max', 'rim_height_absolute_median',
-    'rim_height_absolute_uncertainty',
-    'rim_height_absolute_25p', 'rim_height_absolute_75p',
-    'rim_height_absolute_max', 'rim_height_relative_median',
-    'rim_height_relative_uncertainty',
-    'rim_height_relative_25p', 'rim_height_relative_75p',
-    'rim_height_relative_max', 'middle_cavity_slope_median',
-    'middle_cavity_slope_uncertainty',
-    'middle_cavity_slope_25p', 'middle_cavity_slope_75p',
-    'middle_cavity_slope_max', 'upper_cavity_slope_median',
-    'upper_cavity_slope_uncertainty',
-    'upper_cavity_slope_25p', 'upper_cavity_slope_75p',
-    'upper_cavity_slope_max', 'cavity_shape_exponent_median',
-    'cavity_shape_exponent_uncertainty',
-    'cavity_shape_exponent_25p', 'cavity_shape_exponent_75p',
-    'cavity_shape_exponent_max', 'upper_cavity_roc_median',
-    'upper_cavity_roc_uncertainty',
-    'upper_cavity_roc_25p', 'upper_cavity_roc_75p', 'upper_cavity_roc_max',
-    'upper_flank_roc_median', 'upper_flank_roc_uncertainty',
-    'upper_flank_roc_25p', 'upper_flank_roc_75p', 'upper_flank_roc_max',
-    'lower_rim_span_median', 'lower_rim_span_uncertainty',
-    'lower_rim_span_25p', 'lower_rim_span_75p', 'lower_rim_span_max',
-    'upper_rim_span_median', 'upper_rim_span_uncertainty',
-    'upper_rim_span_25p', 'upper_rim_span_75p', 'upper_rim_span_max',
-    'flank_slope_median', 'flank_slope_uncertainty',
-    'flank_slope_25p', 'flank_slope_75p', 'flank_slope_max',
-    'cavity_rim_decay_length_median', 'cavity_rim_decay_length_uncertainty',
-    'cavity_rim_decay_length_25p', 'cavity_rim_decay_length_75p',
-    'cavity_rim_decay_length_max',
-    'flank_rim_decay_length_median', 'flank_rim_decay_length_uncertainty',
-    'flank_rim_decay_length_25p', 'flank_rim_decay_length_75p',
-    'flank_rim_decay_length_max']
-
-    return (columns)
-
 def main(location_of_craters, dem_folder, shp_folder,
-         suffix, threshold=None, craterID=None):
+         suffix, threshold_min=None, threshold_max=None, craterID=None):
     '''
 
     Returns
@@ -1475,20 +1252,22 @@ def main(location_of_craters, dem_folder, shp_folder,
 
     for index, row in tqdm(gdf_selection.iterrows(), total=gdf_selection.shape[0]):
         if shp_dummy.with_name(row.CRATER_ID + suffix.split('.tif')[0] +
-                               '_ellipse_candidate2.shp').is_file():
+                               '_ellipse_candidate2_polygon.shp').is_file():
             None
         else:
-            try:
-                if threshold and row.diam < threshold:
-                    first_run(dem_dummy.with_name(row.CRATER_ID + suffix),
-                              row.diam/2.0, index)
-                elif threshold and row.diam > threshold:
-                    None
-                else:
-                    first_run(dem_dummy.with_name(row.CRATER_ID + suffix),
-                              row.diam/2.0, index)
-            except:
-                print("some problem here")
+            #try:
+            if threshold_min and threshold_max and np.logical_and(row.diam > threshold_min, row.diam < threshold_max):
+                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+            elif threshold_min and not threshold_max and row.diam > threshold_min:
+                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+            elif threshold_max and not threshold_min and row.diam < threshold_max:
+                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+            elif not threshold_min and not threshold_max:
+                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+            else:
+                None
+            #except:
+            #    print("some problem here")
 
 def world_to_pixel_coordinates(x, y, dem_bbox, dem_resolution):
     ulx, uly = dem_bbox[0], dem_bbox[3]
@@ -1496,10 +1275,26 @@ def world_to_pixel_coordinates(x, y, dem_bbox, dem_resolution):
     y_px = (uly - y) / dem_resolution
     return (x_px, y_px)
 
+def load_pts(point_shp, ellipse_shp, crater_dem_detrended, inner_t, outer_t):
+
+    # Load dem_detrended
+    with rio.open(crater_dem_detrended) as src:
+        z_detrended = reshape_as_image(src.read())[:, :, 0]
+        meta = src.profile
+
+    # infer dem resolution from the crater dem
+    dem_resolution = meta['transform'][0]
+    dem_bbox = utils.get_raster_bbox(crater_dem_detrended)
+
+    yc, xc, y_height_px, x_width_px, y_height_px_2R, x_width_px_2R, crater_radius_px = is_within_disk_ellipse(ellipse_shp, point_shp, dem_resolution, dem_bbox, inner_t, outer_t)
+
+    return (z_detrended, yc, xc, y_height_px, x_width_px, y_height_px_2R, x_width_px_2R, dem_resolution, crater_radius_px)
+
+
 def load_ellipse(ellipse_shp, crater_dem_detrended):
     """
-    ellipse_shp = "/home/nilscp/tmp/fresh_impact_craters/shapefiles/crater0000_LROKaguyaDEM_detrended_ellipse_candidate2_polygon.shp"
-    crater_dem_detrended = "/home/nilscp/tmp/fresh_impact_craters/dem_detrended/crater0000_LROKaguyaDEM_detrended.tif"
+    ellipse_shp = "/home/nilscp/tmp/fresh_impact_craters/shapefiles/polygons/crater0009_LROKaguyaDEM_detrended_ellipse_candidate2_polygon.shp"
+    crater_dem_detrended = "/home/nilscp/tmp/fresh_impact_craters/dem_detrended_2R3R/crater0009_LROKaguyaDEM_detrended.tif"
     """
 
     # Load dem_detrended
@@ -1519,7 +1314,7 @@ def load_ellipse(ellipse_shp, crater_dem_detrended):
 
     # Re-create ellipse from points of shapefile ellipse
     ell = EllipseModel()
-    ell.estimate(np.column_stack((x, y)))
+    ell.estimate(np.column_stack((np.array(x) - xc, np.array(y) - yc)))
     xy_ell = ell.predict_xy(np.linspace(0.0, 2 * np.pi, 512))
     ell_param = ell.params
 
@@ -1530,10 +1325,10 @@ def load_ellipse(ellipse_shp, crater_dem_detrended):
     xy_ell2 = ell2.predict_xy(np.linspace(0.0, 2 * np.pi, 512))
 
     # Convert to pixel coordinates for extracting map coordinates
-    x_ell = xy_ell[:, 0]
-    y_ell = xy_ell[:, 1]
-    x_ell2 = xy_ell2[:, 0]
-    y_ell2 = xy_ell2[:, 1]
+    x_ell = xy_ell[:, 0] + xc
+    y_ell = xy_ell[:, 1] + yc
+    x_ell2 = xy_ell2[:, 0] + xc
+    y_ell2 = xy_ell2[:, 1] + yc
 
     x_px_ell, y_px_ell = world_to_pixel_coordinates(x_ell, y_ell, bbox, dem_resolution)
     x_px_ell2, y_px_ell2 = world_to_pixel_coordinates(x_ell2, y_ell2, bbox, dem_resolution)
@@ -1541,7 +1336,7 @@ def load_ellipse(ellipse_shp, crater_dem_detrended):
 
     crater_radius_px = ((ell_param[2] + ell_param[3]) / 2.0) / dem_resolution
 
-    return (z_detrended, yc_px, xc_px, y_px_ell, x_px_ell, y_px_ell2, x_px_ell2, crater_radius_px, dem_resolution)
+    return (z_detrended, yc_px, xc_px, y_px_ell, x_px_ell, y_px_ell2, x_px_ell2, dem_resolution, crater_radius_px)
 
 
 def load_shapefiles(crater_dem, dem_detrended, folder):
@@ -1622,30 +1417,78 @@ def load_shapefiles(crater_dem, dem_detrended, folder):
     return (gdf_me, gdf_lm, gdf_cs, gdf_ell, gdf_centre)
 
 
-def update_global_crater_centres(in_crater_centres_shp, shapefiles_folder, out_crater_centres_shp):
-    in_crater_centres_shp = Path(in_crater_centres_shp)
-    shapefiles_dummy = Path(shapefiles_folder) / "dummy.shp"
-    gdf = gpd.read_file(in_crater_centres_shp)
-    crs = gdf.crs.to_wkt()
+def update_crater_centres(shp_folder, out_shapefile):
 
-    data = []
-    for index, row in gdf.iterrows():
-        try:
-            shp = shapefiles_dummy.with_name(row.CRATER_ID + "_LROKaguyaDEM_new_crater_centre2.shp")
-            gdf_tmp = gpd.read_file(shp)
-            gdf_ncrs = gdf_tmp.to_crs(crs)
-            tmp_list = list(gdf_ncrs.values[0]) + [gdf_tmp.crs.to_wkt()]
-            tmp_list[0] = row.CRATER_ID
-            data.append(tmp_list)
-        except:
-            None
+    # Moon Cylindrical
+    to_crs = ('PROJCRS["Equirectangular_Moon",'
+              'BASEGEOGCRS["GCS_Moon",'
+              'DATUM["D_Moon",'
+              'ELLIPSOID["Moon_localRadius",1737400,0,'
+              'LENGTHUNIT["metre",1,ID["EPSG",9001]]]],'
+              'PRIMEM["Reference_Meridian",0,'
+              'ANGLEUNIT["Degree",0.0174532925199433]]],'
+              'CONVERSION["unnamed",METHOD["Equidistant Cylindrical (Spherical)",'
+              'ID["EPSG",1029]],PARAMETER["Latitude of 1st standard parallel",0,'
+              'ANGLEUNIT["Degree",0.0174532925199433],ID["EPSG",8823]],'
+              'PARAMETER["Longitude of natural origin",0,'
+              'ANGLEUNIT["Degree",0.0174532925199433],ID["EPSG",8802]],'
+              'PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],'
+              'PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],'
+              'CS[Cartesian,2],AXIS["easting",east,ORDER[1],'
+              'LENGTHUNIT["metre",1,ID["EPSG",9001]]],'
+              'AXIS["northing",north,ORDER[2],LENGTHUNIT["metre",1,ID["EPSG",9001]]]]')
 
-    df = pd.DataFrame(data, columns=['CRATER_ID', 'x', 'y',
-                                     'xc_width', 'yc_height',
-                                     'a', 'b', 'theta', 'geometry', 'crs'])
+    # Moon 2000
+    lonlat_crs = ('GEOGCRS["Moon 2000",DATUM["D_Moon_2000",'
+                  'ELLIPSOID["Moon_2000_IAU_IAG",1737400,0,'
+                  'LENGTHUNIT["metre",1,ID["EPSG",9001]]]],'
+                  'PRIMEM["Greenwich",0,'
+                  'ANGLEUNIT["Decimal_Degree",0.0174532925199433]],'
+                  'CS[ellipsoidal,2],AXIS["longitude",east,ORDER[1],'
+                  'ANGLEUNIT["Decimal_Degree",0.0174532925199433]],'
+                  'AXIS["latitude",north,ORDER[2],'
+                  'ANGLEUNIT["Decimal_Degree",0.0174532925199433]]]')
 
-    gdf_ncenters = gpd.GeoDataFrame(df, geometry=df.geometry, crs=crs)
-    gdf_ncenters.to_file(out_crater_centres_shp)
+    shp_folder = Path(shp_folder)
+    shps = list(sorted(shp_folder.glob("*_detrended_ellipse_candidate2_polygon.shp")))
+
+    for i, s in enumerate(shps):
+        if i == 0:
+            gdf_centroid_eqc = update_crater_centre(s, to_crs, lonlat_crs)
+        else:
+            gdf_centroid_eqc = gdf_centroid_eqc.append(update_crater_centre(s, to_crs, lonlat_crs), ignore_index=False)
+
+    gdf_centroid_eqc.index = np.int32(gdf_centroid_eqc.index)
+    gdf_centroid_eqc.to_file(out_shapefile, index=True)
+
+
+def update_crater_centre(ellipse_shp, to_crs, lonlat_crs):
+
+    ellipse_shp = Path(ellipse_shp)
+
+    gdf_ellipse = gpd.read_file(ellipse_shp)
+    x,y = gdf_ellipse.geometry.iloc[0].exterior.xy
+    centroid = gdf_ellipse.geometry.iloc[0].centroid
+    xc, yc = np.array(centroid.xy)[0][0], np.array(centroid.xy)[1][0]
+
+    # Re-create ellipse from points of shapefile ellipse
+    ell = EllipseModel()
+
+    # by substracting by the centre of the centroid, it avoids failing sometimes
+    ell.estimate(np.column_stack((np.array(x)[::4] - xc, np.array(y)[::4] - yc)))
+    ell_param = ell.params
+    diam = ell_param[2] + ell_param[3]
+
+    # Create new centroid shapefile
+    gdf_centroid = gpd.GeoDataFrame.from_dict({'id': [gdf_ellipse.iloc[0].id] , 'CRATER_ID': [ellipse_shp.name.split('_')[0]] , 'diam': [diam]}, geometry=[centroid], crs=gdf_ellipse.crs)
+    gdf_centroid_eqc = gdf_centroid.to_crs(to_crs)
+    gdf_centroid_lonlat = gdf_centroid.to_crs(lonlat_crs)
+    lon, lat = gdf_centroid_lonlat.geometry.iloc[0].centroid.xy[0].tolist()[0], gdf_centroid_lonlat.geometry.iloc[0].centroid.xy[1].tolist()[0]
+    gdf_centroid_eqc["lon"] = lon
+    gdf_centroid_eqc["lat"] = lat
+    gdf_centroid_eqc = gdf_centroid_eqc.set_index('id')
+
+    return (gdf_centroid_eqc)
 
 
 

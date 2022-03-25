@@ -225,10 +225,11 @@ def removekey(d, key):
     del r[key]
     return r
 
-def iterrows_calculations(gdf, dem, crs_dem, clip_distance, output_dir,
-                          identifier):
+def iterrows_calculations(gdf, dem, crs_dem, clip_distance, output_dir, shp_folder, identifier):
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    Path(shp_folder).mkdir(parents=True, exist_ok=True)
+    shp_folder = Path(shp_folder)
     for index, row in tqdm(gdf.iterrows(), total=gdf.shape[0]):
 
         clipped_raster_fname_final = Path(output_dir) / (row.CRATER_ID + '_' +
@@ -236,37 +237,32 @@ def iterrows_calculations(gdf, dem, crs_dem, clip_distance, output_dir,
         if clipped_raster_fname_final.is_file():
             None
         else:
-            try:
-                crs_local = select_proj(row.lon,row.lat)
-                crater_center = gpd.GeoSeries(row.geometry)
-                crater_center.crs = gdf.crs
-                crater_center_crs_local = crater_center.to_crs(crs_local)
-                buff = crater_center_crs_local.buffer((row.diam / 2.0) * clip_distance)
-                envelope = buff.envelope
-                envelope_crs_dem = envelope.to_crs(crs_dem)
-                bbox = envelope_crs_dem.bounds.values[0]
+            crs_local = select_proj(row.lon,row.lat)
+            crater_center = gpd.GeoSeries(row.geometry)
+            crater_center.crs = gdf.crs
+            crater_center_crs_local = crater_center.to_crs(crs_local)
+            filename = (shp_folder / (row.CRATER_ID + '_initial_crater_centre.shp'))
+            crater_center_crs_local.to_file(filename)
+            buff = crater_center_crs_local.buffer((row.diam / 2.0) * clip_distance)
+            envelope = buff.envelope
+            envelope_crs_dem = envelope.to_crs(crs_dem)
+            bbox = envelope_crs_dem.bounds.values[0]
 
-                clipped_raster_fname = Path(output_dir) / (row.CRATER_ID + '_' +
-                                                           identifier + '_eqc.tif')
+            clipped_raster_fname = Path(output_dir) / (row.CRATER_ID + '_' + identifier + '_eqc.tif')
 
-                utils.clip_from_bbox(dem, bbox, clipped_raster_fname)
+            utils.clip_from_bbox(dem, bbox, clipped_raster_fname)
 
-                # reproject it to either equirectangular (no proj) or lambert
-                crs_rasterio = rio.crs.CRS.from_wkt(crs_local)
-                clipped_raster_fname_final = Path(output_dir) / (row.CRATER_ID + '_' +
-                                                           identifier + '.tif')
+            # reproject it to either equirectangular (no proj) or lambert
+            crs_rasterio = rio.crs.CRS.from_wkt(crs_local)
+            clipped_raster_fname_final = Path(output_dir) / (row.CRATER_ID + '_' + identifier + '.tif')
 
-                utils.reproject_raster(clipped_raster_fname, crs_rasterio,
-                                       clipped_raster_fname_final)
+            utils.reproject_raster(clipped_raster_fname, crs_rasterio, clipped_raster_fname_final)
 
-                #clipped_raster_fname.unlink()
-
-            except:
-                print("ERROR")
+            clipped_raster_fname.unlink()
 
 
 def clip_raster_to_crater(location_of_craters, dem, clip_distance,
-                          output_dir, identifier, craterID=None):
+                          output_dir, shp_folder, identifier, craterID=None):
         
     filename = Path(location_of_craters)
     
@@ -285,7 +281,7 @@ def clip_raster_to_crater(location_of_craters, dem, clip_distance,
     crs_dem = meta['crs'].to_wkt()
 
     iterrows_calculations(gdf_selection, dem, crs_dem, clip_distance,
-                          output_dir, identifier)
+                          output_dir, shp_folder, identifier)
 
 '''
 # Example:
