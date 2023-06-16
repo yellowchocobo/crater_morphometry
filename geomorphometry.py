@@ -1,11 +1,15 @@
+import pandas as pd
+import geopandas as gpd
 import numpy as np
 import scipy
 import scipy.ndimage
 import sys
 
 sys.path.append("/home/nilscp/GIT/crater_morphometry")
+from pathlib import Path
 from scipy.optimize import curve_fit
 from rim_detection import rim_detection
+from tqdm import tqdm
 
 def argmin_values_along_axis(arr, value, axis):
     argmin_idx = np.abs(arr - value).argmin(axis=axis)
@@ -94,8 +98,6 @@ def geomorphometry_cross_section_pts(point_shp, ellipse_shp, crater_dem_detrende
     # cavity shape exponent   - F (1.0R) to G (1.2R) -  can contain NaN!
     cse = np.array([cavity_shape_exponent(distances_pts[i][idxB[0]:idxE[0] + 1],
                                               z_profiles_pts[i][idxB[0]:idxE[0] + 1]) for i in np.arange(z_profiles_pts.shape[0])])
-    # Number of observations
-    nc = y_heights_px_pts.shape[0]
 
     if is_extra_calc:
         # upper cavity wall roc  - D (0.8R) to F (1.0R) - radius_of_curvature
@@ -128,9 +130,9 @@ def geomorphometry_cross_section_pts(point_shp, ellipse_shp, crater_dem_detrende
         slope_lrs = 180. - (mcw + fsa)
 
         return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative,
-               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs, nc)
+               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs)
     else:
-        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative, nc)
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative)
 
 def geomorphometry_cross_section_ellipse(ellipse_shp, crater_dem_detrended, is_extra_calc=False):
 
@@ -188,8 +190,6 @@ def geomorphometry_cross_section_ellipse(ellipse_shp, crater_dem_detrended, is_e
     # cavity shape exponent   - F (1.0R) to G (1.2R) -  can contain NaN!
     cse = np.array([cavity_shape_exponent(distances_ell[i][idxB[0]:idxE[0] + 1],
                                               z_profiles_ell[i][idxB[0]:idxE[0] + 1]) for i in np.arange(z_profiles_ell.shape[0])])
-    # Number of observations
-    nc = 512
 
     if is_extra_calc:
         # upper cavity wall roc  - D (0.8R) to F (1.0R) - radius_of_curvature
@@ -222,9 +222,9 @@ def geomorphometry_cross_section_ellipse(ellipse_shp, crater_dem_detrended, is_e
         slope_lrs = 180. - (mcw + fsa)
 
         return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative,
-               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs, nc)
+               ucw_roc, uf_roc, frdl, crdl, slope_urs, slope_lrs)
     else:
-        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative, nc)
+        return(radius, min_depth, center_depth, mcw, ucw, fsa, cse, rim_height_absolute, rim_height_relative)
 
 
 def radius_of_curvature(distances, z_profile):
@@ -262,41 +262,118 @@ def cavity_slope(distances, z_profiles, starting_index, end_index):
 
     return slope_deg
 
+def main_ellipse(location_of_craters, shp_folder, dem_folder, out_folder, suffix, prefix, craterID=None):
+
+    dem_dummy = Path(dem_folder) / 'dummy.tif'
+    shp_dummy = Path(shp_folder) / 'dummy.shp'
+    filename = Path(location_of_craters)
+
+    # reading the shape file (craters)
+    gdf = gpd.read_file(filename)
+
+    # if a CRATER_ID is specified
+    if craterID:
+        gdf_selection = gdf[gdf.CRATER_ID == craterID]
+    else:
+        gdf_selection = gdf.copy()
+
+    radi_min, radi_25p, radi_med, radi_75p, radi_max, radi_std, radi_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    mdep_min, mdep_25p, mdep_med, mdep_75p, mdep_max, mdep_std, mdep_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    mcwa_min, mcwa_25p, mcwa_med, mcwa_75p, mcwa_max, mcwa_std, mcwa_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    ucwa_min, ucwa_25p, ucwa_med, ucwa_75p, ucwa_max, ucwa_std, ucwa_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    fsan_min, fsan_25p, fsan_med, fsan_75p, fsan_max, fsan_std, fsan_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    csex_min, csex_25p, csex_med, csex_75p, csex_max, csex_std, csex_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    rhab_min, rhab_25p, rhab_med, rhab_75p, rhab_max, rhab_std, rhab_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    rhre_min, rhre_25p, rhre_med, rhre_75p, rhre_max, rhre_std, rhre_ste = [np.zeros(gdf_selection.shape[0]) for _ in range(7)]
+    index = np.zeros(gdf_selection.shape[0])
+
+    i = 0
+    for ind, row in tqdm(gdf_selection.iterrows(), total=gdf_selection.shape[0]):
+        ellipse_shp = shp_dummy.with_name(row.CRATER_ID + suffix.split(".")[0] + "_ellipse_candidate2_polygon.shp")
+        crater_dem_detrended = dem_dummy.with_name(row.CRATER_ID + suffix)
+        data = geomorphometry_cross_section_ellipse(ellipse_shp, crater_dem_detrended, is_extra_calc=False)
+        radi_min[i], radi_25p[i], radi_med[i], radi_75p[i], radi_max[i], radi_std[i], radi_ste[i] = [r for r in statistic(data[0], data[0].shape[0])]
+        mdep_min[i], mdep_25p[i], mdep_med[i], mdep_75p[i], mdep_max[i], mdep_std[i], mdep_ste[i] = [r for r in statistic(data[1], data[0].shape[0])]
+        mcwa_min[i], mcwa_25p[i], mcwa_med[i], mcwa_75p[i], mcwa_max[i], mcwa_std[i], mcwa_ste[i] = [r for r in statistic(data[3], data[0].shape[0])]
+        ucwa_min[i], ucwa_25p[i], ucwa_med[i], ucwa_75p[i], ucwa_max[i], ucwa_std[i], ucwa_ste[i] = [r for r in statistic(data[4], data[0].shape[0])]
+        fsan_min[i], fsan_25p[i], fsan_med[i], fsan_75p[i], fsan_max[i], fsan_std[i], fsan_ste[i] = [r for r in statistic(data[5], data[0].shape[0])]
+        csex_min[i], csex_25p[i], csex_med[i], csex_75p[i], csex_max[i], csex_std[i], csex_ste[i] = [r for r in statistic(data[6], data[0].shape[0])]
+        rhab_min[i], rhab_25p[i], rhab_med[i], rhab_75p[i], rhab_max[i], rhab_std[i], rhab_ste[i] = [r for r in statistic(data[7], data[0].shape[0])]
+        rhre_min[i], rhre_25p[i], rhre_med[i], rhre_75p[i], rhre_max[i], rhre_std[i], rhre_ste[i] = [r for r in statistic(data[8], data[0].shape[0])]
+        index[i] = row['index']
+        i = i + 1
+
+    # create a pandas dataframe
+    lst = np.column_stack([radi_min, radi_25p, radi_med, radi_75p, radi_max, radi_std, radi_ste,
+           mdep_min, mdep_25p, mdep_med, mdep_75p, mdep_max, mdep_std, mdep_ste,
+           mcwa_min, mcwa_25p, mcwa_med, mcwa_75p, mcwa_max, mcwa_std, mcwa_ste,
+           ucwa_min, ucwa_25p, ucwa_med, ucwa_75p, ucwa_max, ucwa_std, ucwa_ste,
+           fsan_min, fsan_25p, fsan_med, fsan_75p, fsan_max, fsan_std, fsan_ste,
+           csex_min, csex_25p, csex_med, csex_75p, csex_max, csex_std, csex_ste,
+           rhab_min, rhab_25p, rhab_med, rhab_75p, rhab_max, rhab_std, rhab_ste,
+           rhre_min, rhre_25p, rhre_med, rhre_75p, rhre_max, rhre_std, rhre_ste])
+
+    df = pd.DataFrame(lst, index=index.astype('int32'), columns=geormorph_columns())
+    crater_id = [prefix + str(index).zfill(4) for index, row in df.iterrows()]
+    df["CRATER_ID"] = crater_id
+
+    # calculate diam
+    diam_min, diam_25p, diam_med, diam_75p, diam_max, diam_std, diam_ste = [array * 2.0 for array in [radi_min, radi_25p, radi_med, radi_75p, radi_max, radi_std, radi_ste]]
+    df["diam_min"] = diam_min
+    df["diam_25p"] = diam_25p
+    df["diam_med"] = diam_med
+    df["diam_75p"] = diam_75p
+    df["diam_max"] = diam_max
+    df["diam_std"] = diam_std
+    df["diam_ste"] = diam_ste
+
+    # calculate depth-diam
+    dedi_min, dedi_25p, dedi_med, dedi_75p, dedi_max = [array for array in [(rhab_min-mdep_min)/diam_min, (rhab_25p-mdep_25p)/diam_25p, (rhab_med-mdep_med)/diam_med, (rhab_75p-mdep_75p)/diam_75p, (rhab_max-mdep_max)/diam_max]]
+    df["dedi_min"] = dedi_min
+    df["dedi_25p"] = dedi_25p
+    df["dedi_med"] = dedi_med
+    df["dedi_75p"] = dedi_75p
+    df["dedi_max"] = dedi_max
+
+
+    # Merge it to the geopandas dataframe.
+
+    # Eventually add information such as within_mare and freshness
+
+def statistic(array, n):
+    percentile = [0.0, 25.0, 50.0, 75.0, 100.0]
+    arr_min, arr_25p, arr_med, arr_75p, arr_max = [np.percentile(array, p) for p in percentile]
+    std = np.std(array)
+    std_error = std / np.sqrt(n)
+    return (arr_min, arr_25p, arr_med, arr_75p, arr_max, std, std_error)
+
+
 def geormorph_columns():
 
-    columns = ['diameter_median', 'diameter_uncertainty', 'diameter_25p',
-    'diameter_75p', 'diameter_max', 'depth_median', 'depth_uncertainty',
-    'depth_25p', 'depth_75p', 'depth_max', 'rim_height_absolute_median',
-    'rim_height_absolute_uncertainty',
-    'rim_height_absolute_25p', 'rim_height_absolute_75p',
-    'rim_height_absolute_max', 'rim_height_relative_median',
-    'rim_height_relative_uncertainty',
-    'rim_height_relative_25p', 'rim_height_relative_75p',
-    'rim_height_relative_max', 'middle_cavity_slope_median',
-    'middle_cavity_slope_uncertainty',
-    'middle_cavity_slope_25p', 'middle_cavity_slope_75p',
-    'middle_cavity_slope_max', 'upper_cavity_slope_median',
-    'upper_cavity_slope_uncertainty',
-    'upper_cavity_slope_25p', 'upper_cavity_slope_75p',
-    'upper_cavity_slope_max', 'cavity_shape_exponent_median',
-    'cavity_shape_exponent_uncertainty',
-    'cavity_shape_exponent_25p', 'cavity_shape_exponent_75p',
-    'cavity_shape_exponent_max', 'upper_cavity_roc_median',
-    'upper_cavity_roc_uncertainty',
-    'upper_cavity_roc_25p', 'upper_cavity_roc_75p', 'upper_cavity_roc_max',
-    'upper_flank_roc_median', 'upper_flank_roc_uncertainty',
-    'upper_flank_roc_25p', 'upper_flank_roc_75p', 'upper_flank_roc_max',
-    'lower_rim_span_median', 'lower_rim_span_uncertainty',
-    'lower_rim_span_25p', 'lower_rim_span_75p', 'lower_rim_span_max',
-    'upper_rim_span_median', 'upper_rim_span_uncertainty',
-    'upper_rim_span_25p', 'upper_rim_span_75p', 'upper_rim_span_max',
-    'flank_slope_median', 'flank_slope_uncertainty',
-    'flank_slope_25p', 'flank_slope_75p', 'flank_slope_max',
-    'cavity_rim_decay_length_median', 'cavity_rim_decay_length_uncertainty',
-    'cavity_rim_decay_length_25p', 'cavity_rim_decay_length_75p',
-    'cavity_rim_decay_length_max',
-    'flank_rim_decay_length_median', 'flank_rim_decay_length_uncertainty',
-    'flank_rim_decay_length_25p', 'flank_rim_decay_length_75p',
-    'flank_rim_decay_length_max']
+    columns = ["diam_min", "diam_25p", "diam_med", "diam_75p", "diam_max", "diam_std", "diam_ste",
+               "mdep_min", "mdep_25p", "mdep_med", "mdep_75p", "mdep_max", "mdep_std", "mdep_ste",
+               "mcwa_min", "mcwa_25p", "mcwa_med", "mcwa_75p", "mcwa_max", "mcwa_std", "mcwa_ste",
+               "ucwa_min", "ucwa_25p", "ucwa_med", "ucwa_75p", "ucwa_max", "ucwa_std", "ucwa_ste",
+               "fsan_min", "fsan_25p", "fsan_med", "fsan_75p", "fsan_max", "fsan_std", "fsan_ste",
+               "csex_min", "csex_25p", "csex_med", "csex_75p", "csex_max", "csex_std", "csex_ste",
+               "rhab_min", "rhab_25p", "rhab_med", "rhab_75p", "rhab_max", "rhab_std", "rhab_ste",
+               "rhre_min", "rhre_25p", "rhre_med", "rhre_75p", "rhre_max", "rhre_std", "rhre_ste"]
 
     return (columns)
+
+
+def is_on_mare(location_of_craters, mare_shp):
+
+    gdf = gpd.read_file(location_of_craters)
+    gdf_mare = gpd.read_file(mare_shp)
+    gdf_mare_proj = gdf_mare.to_crs(gdf.crs.to_wkt())
+    gdf_expl = gdf_mare_proj.explode()
+    mare_geom = gdf_expl.geometry.unary_union
+
+
+    is_mare = []
+    for index, row in gdf.iterrows():
+        if row.geometry.within(mare_geom):
+            is_mare.append(1)
+        else:
+            is_mare.append(0)

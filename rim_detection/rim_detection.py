@@ -1255,19 +1255,19 @@ def main(location_of_craters, dem_folder, shp_folder,
                                '_ellipse_candidate2_polygon.shp').is_file():
             None
         else:
-            #try:
-            if threshold_min and threshold_max and np.logical_and(row.diam > threshold_min, row.diam < threshold_max):
-                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
-            elif threshold_min and not threshold_max and row.diam > threshold_min:
-                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
-            elif threshold_max and not threshold_min and row.diam < threshold_max:
-                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
-            elif not threshold_min and not threshold_max:
-                first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
-            else:
-                None
-            #except:
-            #    print("some problem here")
+            try:
+                if threshold_min and threshold_max and np.logical_and(row.diam > threshold_min, row.diam < threshold_max):
+                    first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+                elif threshold_min and not threshold_max and row.diam > threshold_min:
+                    first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+                elif threshold_max and not threshold_min and row.diam < threshold_max:
+                    first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+                elif not threshold_min and not threshold_max:
+                    first_run(dem_dummy.with_name(row.CRATER_ID + suffix), row.diam/2.0, index)
+                else:
+                    None
+            except:
+                print(row.CRATER_ID)
 
 def world_to_pixel_coordinates(x, y, dem_bbox, dem_resolution):
     ulx, uly = dem_bbox[0], dem_bbox[3]
@@ -1416,8 +1416,14 @@ def load_shapefiles(crater_dem, dem_detrended, folder):
 
     return (gdf_me, gdf_lm, gdf_cs, gdf_ell, gdf_centre)
 
-
-def update_crater_centres(shp_folder, out_shapefile):
+def update_crater_centres(shp_folder, out_shapefile, old_crater_centres, replace_crs=False):
+    """
+    Might be some very rare case where the updating of crater centres will
+    cause a change of coord sys in the clipping of DEM. If this is the case,
+    all values will be equal to 0 after the calculations (because the ellipse and
+    dem are not projected the same way). This is an isolated case and it should be easily
+    spotted. Next version will have this part fixed!
+    """
 
     # Moon Cylindrical
     to_crs = ('PROJCRS["Equirectangular_Moon",'
@@ -1452,15 +1458,26 @@ def update_crater_centres(shp_folder, out_shapefile):
     shp_folder = Path(shp_folder)
     shps = list(sorted(shp_folder.glob("*_detrended_ellipse_candidate2_polygon.shp")))
 
-    for i, s in enumerate(shps):
+    for i, s in enumerate(tqdm(shps)):
         if i == 0:
             gdf_centroid_eqc = update_crater_centre(s, to_crs, lonlat_crs)
         else:
             gdf_centroid_eqc = gdf_centroid_eqc.append(update_crater_centre(s, to_crs, lonlat_crs), ignore_index=False)
 
     gdf_centroid_eqc.index = np.int32(gdf_centroid_eqc.index)
-    gdf_centroid_eqc.to_file(out_shapefile, index=True)
 
+    # This can be deleted in the future (just a special case for me)
+    if replace_crs:
+        None
+    else:
+        gdf_old_eqc = gpd.read_file(old_crater_centres)
+        df_old_eqc = gdf_old_eqc[['CRATER_ID','lon','lat']]
+        df_new_eqc = gdf_centroid_eqc[['CRATER_ID','lon','lat']]
+        df_old_eqc_sampled = df_old_eqc.loc[df_new_eqc.index]
+        gdf_centroid_eqc["lon"] = df_old_eqc_sampled["lon"].values
+        gdf_centroid_eqc["lat"] = df_old_eqc_sampled["lat"].values
+
+    gdf_centroid_eqc.to_file(out_shapefile, index=True)
 
 def update_crater_centre(ellipse_shp, to_crs, lonlat_crs):
 
